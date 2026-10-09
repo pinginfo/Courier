@@ -81,6 +81,11 @@ spec:
               subPath: ca.crt
               readOnly: true
             {{- end }}
+            {{- range $i, $k := .Values.keyMounts }}
+            - name: keys-{{ $i }}
+              mountPath: {{ $k.path }}
+              readOnly: true
+            {{- end }}
       volumes:
         - name: config
           configMap:
@@ -92,6 +97,11 @@ spec:
         - name: ca
           configMap:
             name: {{ .Values.caConfigMap }}
+        {{- end }}
+        {{- range $i, $k := .Values.keyMounts }}
+        - name: keys-{{ $i }}
+          configMap:
+            name: {{ $k.configMap }}
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

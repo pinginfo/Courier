@@ -20,5 +20,6 @@ Stack: Go, container image (multi-stage Dockerfile), Helm chart in `charts/`.
 ## Toolchain (this machine)
 - Go 1.27.2 in `~/sdk/go1.27.2`, helm in `~/sdk/helm-4.3.0`, scanners in `~/go/bin`; all symlinked into `~/.local/bin`.
 - No `make`, `gcc` or container runtime installed: run the Makefile targets' commands directly; `go test -race` is unavailable without gcc.
-- Module name: `courier`. Layout: `cmd/courier`, `internal/{config,observability,server}`, `charts/courier`, `deploy/Dockerfile`.
+- Module name: `courier`. Layout: `cmd/courier`, `internal/{config,observability,server,syncer,provider,storage,fetcher,state}`, `charts/courier`, `deploy/Dockerfile`.
+- Opt-in real-data tests: `COURIER_REAL_ALPINE=<dir>` (provider/apk) and `COURIER_LIVE_KEYS=<keys dir>` (syncer, downloads ~300 MB). Keys/fixtures are in `~/dl-alpine`.
 - Design: `docs/architecture.md`. Example config: `config.example.yaml`.

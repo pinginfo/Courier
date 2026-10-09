@@ -16,16 +16,18 @@ manages the sync.
 
 ## Status
 
-Early scaffold. What works today:
+Early but functional for Alpine. What works today:
 
-- Config loading and validation (`courier validate`)
-- HTTP server with `/healthz`, `/readyz`, `/status` and Prometheus `/metrics`
-- Structured logging, graceful shutdown
-- Dockerfile and Helm chart (with optional ServiceMonitor and alert rules)
+- **Alpine (APK) mirroring**: verifies the signed `APKINDEX.tar.gz` against your trusted keys,
+  checks each package's size and control-segment checksum against the index, uploads to S3,
+  publishes the index last, and garbage-collects removed packages after a grace period.
+- Scheduler (cron per repo), `courier sync <repo>`, and `POST /sync/{repo}`.
+- Config loading and validation, structured JSON logs, Prometheus metrics, health endpoints.
+- Dockerfile and Helm chart (with optional ServiceMonitor and alert rules).
 
-**Not implemented yet:** the sync engine, the S3 storage layer, and the APT, RPM and APK
-providers. `courier sync` currently returns an error, and `serve` does not sync anything.
-See the delivery plan in [docs/architecture.md](docs/architecture.md#11-delivery-plan).
+**Not implemented yet:** the APT (Ubuntu) and RPM (Fedora) providers. Repos of those types are
+listed in `/status` as `unsupported` and are not scheduled. See the delivery plan in
+[docs/architecture.md](docs/architecture.md#11-delivery-plan).
 
 ## Quick start
 
@@ -50,9 +52,19 @@ curl localhost:8080/metrics | grep courier_
 |---|---|
 | `courier serve -c config.yaml` | Run the scheduler, API and metrics |
 | `courier validate -c config.yaml` | Validate the config file and exit |
-| `courier sync -c config.yaml <repo>` | Run one sync now (not implemented yet) |
+| `courier sync -c config.yaml <repo>` | Run one sync now in the foreground and exit |
 | `courier version` | Print the version |
 
+### HTTP API
+
+| Endpoint | Description |
+|---|---|
+| `GET /healthz`, `GET /readyz` | Liveness; readiness (checks the S3 bucket) |
+| `GET /status` | Per-repo last run, result, counts |
+| `POST /sync/{repo}` | Start a sync now (`202`, `404` unknown repo, `409` already running) |
+| `GET /metrics` | Prometheus metrics |
+
+There is no authentication on the API; keep the Service `ClusterIP`/LAN-only.
 ## Configuration
 
 One YAML file; unknown fields are rejected. See [config.example.yaml](config.example.yaml)
@@ -67,6 +79,11 @@ for a complete example covering Ubuntu, Fedora and Alpine.
   releases, repos/components and architectures.
 - `server`, `log`: listen address, log level (`debug|info|warn|error`) and format
   (`json|text`).
+
+Package signatures are never altered: files are copied byte-for-byte, and your clients verify them with
+their own keys. For Alpine you can optionally set `apk.keys_dir` (a directory of trusted `*.rsa.pub` keys from
+https://alpinelinux.org/keys/) so that Courier also verifies the upstream index before mirroring it; if unset,
+Courier logs a warning and mirrors the index unverified.
 
 Releases and architectures are plain lists, so adding one is a config change.
 
@@ -88,7 +105,7 @@ Metrics are exposed at `/metrics`:
 | `courier_gc_deleted_objects_total{repo}` | counter |
 | `courier_build_info{version}` | gauge |
 
-Logs are JSON on stderr. The sync engine will tag every line with `repo` and `run_id`.
+Logs are JSON on stderr. Every sync log line is tagged with `repo` and `run_id`.
 The Helm chart can create a `ServiceMonitor` and a `PrometheusRule` (`CourierSyncStale`,
 `CourierSyncFailing`, `CourierDown`).
 
@@ -136,6 +153,11 @@ cmd/courier/            CLI entry point
 internal/config/        config loading and validation
 internal/observability/ logging and Prometheus metrics
 internal/server/        HTTP endpoints
+internal/syncer/        sync engine, runner (scheduler + status)
+internal/provider/      provider interface; apk/ implementation
+internal/storage/       S3 (minio-go) and in-memory stores
+internal/fetcher/       HTTP downloads: retries, rate limit, stall detection
+internal/state/         per-repo manifest stored in the bucket
 charts/courier/         Helm chart
 deploy/Dockerfile       container image
 docs/architecture.md    design, decisions and delivery plan

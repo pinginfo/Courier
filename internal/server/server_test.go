@@ -20,7 +20,7 @@ func newHandler(ready func(context.Context) error) http.Handler {
 		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Registry: m.Registry,
 		Ready:    ready,
-		Status:   func() []RepoStatus { return []RepoStatus{{Name: "alpine", Type: "apk", Schedule: "* * * * *"}} },
+		Status:   func() any { return []map[string]string{{"name": "alpine"}} },
 	})
 }
 

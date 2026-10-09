@@ -243,3 +243,17 @@ Structured JSON via `log/slog` to stdout. Every line carries `repo` and `run_id`
 - **Upstreams:** official upstreams by default (configurable per repo).
 - **Edge/testing:** not mirrored by default (`edge`, `updates-testing` are off). Can be enabled per repo in the config.
 - **Access:** LAN only. The mirror is not exposed to the internet, so plain HTTP from MinIO is acceptable; TLS via a reverse proxy is optional. The anonymous read-only policy on the mirror prefix is enough, with no auth layer for clients.
+
+## 13. Implementation notes (as built)
+
+- **Alpine verification (optional).** Package and index signatures are mirrored untouched either way. If `apk.keys_dir` is set, the `APKINDEX.tar.gz` RSA signature (SHA-1 `.SIGN.RSA.` and SHA-256 `.SIGN.RSA256.`) is verified against those keys before anything is mirrored; if unset, Courier warns and mirrors the index as is (clients still verify it). Size and control-segment checks always run. Every `.apk` is checked for the size in the index and for the control-segment checksum (`C:` field, `Q1` = SHA-1 of the compressed control member). Verified against the real Alpine 3.20 index and key. Data-segment integrity is covered by the client, which verifies the package signature on install; Courier does not hash the data segment.
+- **What "owned" means.** Courier only ever deletes objects listed in its own manifest (`_courier/state/<repo>.json`). It does not list the bucket, so unrelated objects under the same prefix are never touched.
+- **Failure behaviour.** If any package fails, no metadata is published and the manifest is not saved. Already-uploaded packages are adopted on the next run (existence and size check) instead of being downloaded again.
+- **Skipping.** A package in the manifest with the expected size is skipped without any S3 call. Corruption inside the bucket is therefore not detected on every run; a periodic full re-verify is future work.
+- **Scheduling.** One in-process cron per repo; a per-repo lock prevents overlap between scheduled runs, `POST /sync/{repo}` and `courier sync`. Running two pods against the same bucket is unsupported.
+- **Unsupported types.** `apt` and `rpm` repos are accepted by the config but listed as `unsupported` and not scheduled until their providers exist.
+- **Transient files.** Each package is downloaded to a temporary file, verified, then uploaded, so a bad file is never written to the bucket. Size the pod's `/tmp` for `concurrency` times the largest package.
+
+### MinIO status (important for the S3 backend)
+
+The open-source MinIO server and `mc` are archived upstream: no further releases, security updates, or downloadable binaries. Courier only uses the standard S3 API (path-style, Put/Get/Stat/Delete/BucketExists), so it should work with any S3-compatible store (for example Garage, SeaweedFS, Ceph RGW, or a commercial MinIO build). Consider the long-term plan for the store that holds the mirror. The S3 layer is tested against an in-process fake S3 server, not against a real MinIO.

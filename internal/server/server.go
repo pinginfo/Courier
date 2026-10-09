@@ -1,4 +1,4 @@
-// Package server exposes health, status and metrics over HTTP.
+// Package server exposes health, status, metrics and the sync trigger over HTTP.
 package server
 
 import (
@@ -13,13 +13,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// RepoStatus is the per-repo view served at /status.
-type RepoStatus struct {
-	Name     string `json:"name"`
-	Type     string `json:"type"`
-	Schedule string `json:"schedule"`
-}
-
 // Options configures the HTTP server.
 type Options struct {
 	Addr     string
@@ -27,15 +20,19 @@ type Options struct {
 	Registry *prometheus.Registry
 	// Ready reports whether dependencies (S3, ...) are usable. Nil means always ready.
 	Ready func(ctx context.Context) error
-	// Status returns the current state of every repo.
-	Status func() []RepoStatus
+	// Status returns the current state of every repo (JSON-encoded as is).
+	Status func() any
+	// Trigger starts a sync of the named repo. It returns ErrBusy-like errors
+	// mapped through TriggerStatus.
+	Trigger func(repo string) error
+	// TriggerStatus maps a Trigger error to an HTTP status code.
+	TriggerStatus func(err error) int
 }
 
 // Handler builds the HTTP routes.
 func Handler(o Options) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))
 	})
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
@@ -51,13 +48,29 @@ func Handler(o Options) http.Handler {
 		_, _ = w.Write([]byte("ok\n"))
 	})
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, _ *http.Request) {
-		var repos []RepoStatus
+		var repos any = []any{}
 		if o.Status != nil {
 			repos = o.Status()
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"repos": repos})
 	})
+	if o.Trigger != nil {
+		mux.HandleFunc("POST /sync/{repo}", func(w http.ResponseWriter, r *http.Request) {
+			name := r.PathValue("repo")
+			if err := o.Trigger(name); err != nil {
+				code := http.StatusInternalServerError
+				if o.TriggerStatus != nil {
+					code = o.TriggerStatus(err)
+				}
+				http.Error(w, err.Error(), code)
+				return
+			}
+			o.Logger.Info("sync triggered via API", "repo", name)
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte("accepted\n"))
+		})
+	}
 	mux.Handle("GET /metrics", promhttp.HandlerFor(o.Registry, promhttp.HandlerOpts{}))
 	return mux
 }

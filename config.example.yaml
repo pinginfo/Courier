@@ -46,6 +46,9 @@ repos:
       branches: [v3.20, v3.21]
       repos: [main, community]
       architectures: [x86_64]
+      # Optional: verify the upstream APKINDEX signature before mirroring. Without it
+      # the index is mirrored unchanged and clients still verify it themselves.
+      # keys_dir: /etc/courier/keys/alpine # trusted *.rsa.pub files from https://alpinelinux.org/keys/
 
 server:
   listen: ":8080"

@@ -9,9 +9,11 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"
 )
 
@@ -89,6 +91,10 @@ type APK struct {
 	Branches      []string `yaml:"branches"`
 	Repos         []string `yaml:"repos"`
 	Architectures []string `yaml:"architectures"`
+	// KeysDir optionally holds trusted Alpine *.rsa.pub keys. When set, the
+	// APKINDEX signature is verified before anything is mirrored; when empty,
+	// the index is mirrored as is (clients still verify it on apk update).
+	KeysDir string `yaml:"keys_dir"`
 }
 
 // Server holds HTTP server settings.
@@ -102,7 +108,37 @@ type Log struct {
 	Format string `yaml:"format"`
 }
 
-var nameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+var (
+	nameRe    = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+	segmentRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	rateRe    = regexp.MustCompile(`^(\d+)\s*([KMG]?)B/s$`)
+)
+
+// ParseRate converts a rate such as "50MB/s" into bytes per second. An empty
+// string or "0" means unlimited (0).
+func ParseRate(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" || s == "0" {
+		return 0, nil
+	}
+	m := rateRe.FindStringSubmatch(s)
+	if m == nil {
+		return 0, fmt.Errorf("rate %q must look like 50MB/s (units B, KB, MB, GB)", s)
+	}
+	n, err := strconv.ParseInt(m[1], 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	switch m[2] {
+	case "K":
+		n <<= 10
+	case "M":
+		n <<= 20
+	case "G":
+		n <<= 30
+	}
+	return n, nil
+}
 
 // Load reads, defaults and validates the config file at path.
 func Load(path string) (*Config, error) {
@@ -171,6 +207,9 @@ func (c *Config) Validate() error {
 	if c.Defaults.Concurrency < 0 {
 		add("defaults.concurrency must be positive")
 	}
+	if _, err := ParseRate(c.Defaults.RateLimit); err != nil {
+		add("defaults.rate_limit: %v", err)
+	}
 	switch c.Log.Level {
 	case "debug", "info", "warn", "error":
 	default:
@@ -210,8 +249,8 @@ func (c *Config) Validate() error {
 			add("%s: duplicate prefix %q", where, r.Prefix)
 		}
 		prefixes[r.Prefix] = true
-		if strings.TrimSpace(r.Schedule) == "" {
-			add("%s: schedule is required", where)
+		if _, err := cron.ParseStandard(r.Schedule); err != nil {
+			add("%s: schedule %q: %v", where, r.Schedule, err)
 		}
 		errs = append(errs, validateTypeSection(where, r)...)
 	}
@@ -228,6 +267,12 @@ func validateTypeSection(where string, r Repo) []error {
 		for k, v := range lists {
 			if len(v) == 0 {
 				errs = append(errs, fmt.Errorf("%s: %s.%s must not be empty", where, section, k))
+			}
+			// These values become URL and object-key path segments.
+			for _, s := range v {
+				if !segmentRe.MatchString(s) {
+					errs = append(errs, fmt.Errorf("%s: %s.%s: %q is not a valid path segment", where, section, k, s))
+				}
 			}
 		}
 	}

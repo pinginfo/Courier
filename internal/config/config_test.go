@@ -103,3 +103,43 @@ func TestExampleConfigIsValid(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestParseRate(t *testing.T) {
+	tests := []struct {
+		in      string
+		want    int64
+		wantErr bool
+	}{
+		{"", 0, false}, {"0", 0, false}, {"500B/s", 500, false}, {"10KB/s", 10 << 10, false},
+		{"50MB/s", 50 << 20, false}, {"1GB/s", 1 << 30, false}, {"fast", 0, true}, {"5Mbit", 0, true},
+	}
+	for _, tt := range tests {
+		got, err := ParseRate(tt.in)
+		if (err != nil) != tt.wantErr || got != tt.want {
+			t.Errorf("ParseRate(%q) = %d, %v", tt.in, got, err)
+		}
+	}
+}
+
+func TestSchedulePathSegmentsAndRate(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(string) string
+		wantErr string
+	}{
+		{"bad cron", func(s string) string { return strings.Replace(s, `"0 */3 * * *"`, `"every day"`, 1) }, "schedule"},
+		{"traversal in branch", func(s string) string { return strings.Replace(s, "[v3.20]", "[../x]", 1) }, "not a valid path segment"},
+		{"slash in arch", func(s string) string { return strings.Replace(s, "[x86_64]", "[a/b]", 1) }, "not a valid path segment"},
+		{"bad rate", func(s string) string {
+			return strings.Replace(s, "repos:\n", "defaults:\n  rate_limit: lots\nrepos:\n", 1)
+		}, "defaults.rate_limit"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse(strings.NewReader(tt.mutate(validYAML)))
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("err = %v, want containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}

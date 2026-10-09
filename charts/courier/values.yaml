@@ -33,6 +33,14 @@ config:
     level: info
     format: json
 
+# Trusted signing keys, one ConfigMap per distro, each holding the key files.
+# Example (Alpine keys from https://alpinelinux.org/keys/):
+#   kubectl create configmap alpine-keys --from-file=keys/alpine/
+#   keyMounts:
+#     - configMap: alpine-keys
+#       path: /etc/courier/keys/alpine   # = repos[].apk.keys_dir
+keyMounts: []
+
 # Optional private CA for the MinIO endpoint, mounted at /etc/courier/ca.crt
 # (set config.storage.ca_file accordingly).
 caConfigMap: ""
