@@ -103,7 +103,7 @@ func NewMetrics(version string) *Metrics {
 func (m *Metrics) InitRepo(repo string) {
 	m.SyncInProgress.WithLabelValues(repo).Set(0)
 	m.SyncLastSuccess.WithLabelValues(repo).Set(0)
-	for _, r := range []string{"success", "failure"} {
+	for _, r := range []string{"success", "failure", "cancelled"} {
 		m.SyncRuns.WithLabelValues(repo, r)
 	}
 }

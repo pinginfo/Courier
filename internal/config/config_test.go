@@ -188,3 +188,26 @@ func TestRPMValidation(t *testing.T) {
 		t.Fatalf("rawhide with releases only must be valid: %v", err)
 	}
 }
+
+func TestParseSizeAndTempBudget(t *testing.T) {
+	for in, want := range map[string]int64{"": 0, "1B": 1, "4KB": 4 << 10, "512MB": 512 << 20, "4GB": 4 << 30} {
+		if got, err := ParseSize(in); err != nil || got != want {
+			t.Errorf("ParseSize(%q) = %d, %v; want %d", in, got, err, want)
+		}
+	}
+	for _, bad := range []string{"4", "big", "4TB", "-1GB", "4 GiB"} {
+		if _, err := ParseSize(bad); err == nil {
+			t.Errorf("ParseSize(%q) accepted", bad)
+		}
+	}
+	if got := (Defaults{}).MaxTempBytes(); got != DefaultMaxTempBytes {
+		t.Errorf("default budget = %d", got)
+	}
+	if got := (Defaults{MaxTempSize: "2GB"}).MaxTempBytes(); got != 2<<30 {
+		t.Errorf("configured budget = %d", got)
+	}
+	y := strings.Replace(validYAML, "repos:\n", "defaults:\n  max_temp_size: lots\nrepos:\n", 1)
+	if _, err := Parse(strings.NewReader(y)); err == nil || !strings.Contains(err.Error(), "max_temp_size") {
+		t.Errorf("bad max_temp_size accepted: %v", err)
+	}
+}

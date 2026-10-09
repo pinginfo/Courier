@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -132,7 +133,11 @@ func cmdSync(args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	logger, err := observability.NewLogger(os.Stderr, a.cfg.Log.Level, a.cfg.Log.Format)
+	if err != nil {
+		return err
+	}
+	ctx, stop := signalContext(logger)
 	defer stop()
 	res, err := a.runner.RunOnce(ctx, rest[0])
 	if err != nil {
@@ -155,7 +160,7 @@ func cmdServe(args []string) error {
 	logger, _ := observability.NewLogger(os.Stderr, a.cfg.Log.Level, a.cfg.Log.Format)
 	logger.Info("courier starting", "version", version, "repos", len(a.cfg.Repos))
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, stop := signalContext(logger)
 	defer stop()
 
 	if err := a.runner.Start(ctx); err != nil {
@@ -185,4 +190,21 @@ func cmdServe(args []string) error {
 	a.runner.Stop()
 	logger.Info("courier stopped")
 	return err
+}
+
+// signalContext returns a context that is cancelled on SIGINT or SIGTERM, and
+// logs which signal arrived, so that a stop is never a mystery in the logs.
+func signalContext(logger *slog.Logger) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	ch := make(chan os.Signal, 2)
+	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		select {
+		case s := <-ch:
+			logger.Info("signal received, stopping", "signal", s.String())
+			cancel(fmt.Errorf("received signal %s", s))
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, func() { signal.Stop(ch); cancel(nil) }
 }

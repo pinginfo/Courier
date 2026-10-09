@@ -11,6 +11,9 @@ storage:
 
 defaults:
   concurrency: 8
+  # Cap on temporary disk used by in-flight package downloads. Set the pod's /tmp volume larger
+  # than this plus the staged indexes (chart value tmpSize). One package can be 2 GB.
+  max_temp_size: 4GB
   rate_limit: 50MB/s
   retention:
     grace_period: 72h

@@ -123,6 +123,26 @@ Logs are JSON on stderr. Every sync log line is tagged with `repo` and `run_id`.
 The Helm chart can create a `ServiceMonitor` and a `PrometheusRule` (`CourierSyncStale`,
 `CourierSyncFailing`, `CourierDown`).
 
+## Troubleshooting
+
+**A sync log ends with `context canceled`.** That is not a sync error: the process was told to stop (the log now says
+`signal received, stopping` with the signal, and the run is counted as `cancelled`, not `failure`). Find out who stopped it:
+
+```sh
+kubectl get pod -l app.kubernetes.io/name=courier          # RESTARTS column, STATUS (Evicted?)
+kubectl describe pod <pod>                                 # Last State, Reason, and the Events at the bottom
+kubectl get events --sort-by=.lastTimestamp | grep -i courier
+kubectl logs <pod> --previous                              # the container that was stopped
+```
+
+Common reasons: `Evicted` with *ephemeral local storage usage exceeds the total limit* (raise `tmpSize` and keep
+`defaults.max_temp_size` below it; a single Fedora package can be 2 GB), `OOMKilled` (raise the memory limit; no
+graceful shutdown is logged in that case), a failed liveness probe, a `helm upgrade` or node drain. Runs resume where they
+stopped: packages already in the bucket are not downloaded again.
+
+**Follow a running sync.** `transfer progress` is logged every 30 seconds (`done`, `of`, `downloaded`, `already_present`,
+`failed`, `bytes`). Filter by `run_id`. `curl localhost:8080/status` shows the last result per repo.
+
 ## Monitoring (Prometheus and Grafana)
 
 The chart can create everything needed. All three parts are off by default.

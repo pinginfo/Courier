@@ -92,6 +92,7 @@
 
     {
       "id": 10, "type": "timeseries", "title": "Sync runs",
+      "description": "cancelled = interrupted by a shutdown or restart; nothing was published and the next run resumes. Only failures raise alerts.",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 7 },
       "targets": [ { "refId": "A", "legendFormat": "{{result}}", "expr": "sum by (result) (increase(courier_sync_runs_total{job=~\"$job\", repo=~\"$repo\"}[$__rate_interval]))" } ],
@@ -102,7 +103,8 @@
         },
         "overrides": [
           { "matcher": { "id": "byName", "options": "success" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } } ] },
-          { "matcher": { "id": "byName", "options": "failure" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] }
+          { "matcher": { "id": "byName", "options": "failure" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] },
+          { "matcher": { "id": "byName", "options": "cancelled" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "gray" } } ] }
         ]
       },
       "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }

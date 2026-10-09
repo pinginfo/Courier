@@ -24,6 +24,7 @@ config:
     secret_key_env: S3_SECRET_KEY
   defaults:
     concurrency: 8
+    max_temp_size: 4GB   # cap on temporary disk used by in-flight downloads
     retention:
       grace_period: 72h
   repos: []
@@ -46,6 +47,12 @@ keyMounts: []
 caConfigMap: ""
 
 replicaCount: 1 # one writer per repo; do not scale out
+
+# Scratch space for in-flight downloads (an emptyDir mounted at /tmp). Courier keeps
+# its use under config.defaults.max_temp_size (4GB by default) plus the staged
+# repository indexes (a few hundred MB per Fedora or Ubuntu repo). If this limit is
+# exceeded, Kubernetes evicts the pod. Keep it comfortably above both.
+tmpSize: 10Gi
 
 service:
   type: ClusterIP

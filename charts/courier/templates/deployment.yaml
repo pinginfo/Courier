@@ -92,7 +92,7 @@ spec:
             name: {{ include "courier.fullname" . }}
         - name: tmp
           emptyDir:
-            sizeLimit: 2Gi
+            sizeLimit: {{ .Values.tmpSize }}
         {{- if .Values.caConfigMap }}
         - name: ca
           configMap:

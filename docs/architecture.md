@@ -283,3 +283,9 @@ For large files the S3 client uploads in parts. Over plain HTTP, `minio-go` sign
 ### Monitoring as built
 
 The chart ships a `ServiceMonitor`, a `PrometheusRule` (`CourierSyncStale`, `CourierSyncFailing`, `CourierDown`) and a Grafana dashboard (`charts/courier/dashboards/courier.json`, delivered as a ConfigMap for the Grafana sidecar), all opt-in. `internal/observability/dashboard_test.go` fails if the dashboard queries a metric Courier does not export. Repo series use fixed colours per entity (blue alpine, orange ubuntu, aqua fedora) from the validated first three slots of the data-viz palette; other repo names fall back to the default palette. There is no Loki/log panel: logs are structured JSON on stdout tagged with `repo` and `run_id`, to be collected by whatever the cluster already uses.
+
+### Disk budget and run outcomes
+
+- **Bounded scratch disk.** Each package is downloaded to a temporary file before it is verified and uploaded. A weighted semaphore (`defaults.max_temp_size`, default 4 GB) reserves each package's size before its temp file is created, so in-flight disk use cannot exceed the budget regardless of `concurrency`. A package larger than the whole budget is downloaded alone. Fedora 43 has a 1.76 GiB package and its 8 largest total 9.5 GiB, so an unbounded design would have exceeded the original 2 GiB pod volume. The chart's `tmpSize` (default 10Gi) must stay above the budget plus staged indexes (about 290 MiB for Fedora 43 `releases`).
+- **Outcomes.** A run ends as `success`, `failure` or `cancelled` (`courier_sync_runs_total{result}`). Cancelled runs (shutdown, eviction, cancelled request) are not failures and raise no alert; nothing is published and the next run resumes. The stopping signal is logged.
+- **Live counters.** `courier_bytes_total` is incremented per package as it completes, and `transfer progress` is logged every 30 s.

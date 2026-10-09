@@ -48,8 +48,12 @@ type Storage struct {
 
 // Defaults apply to every repo unless overridden.
 type Defaults struct {
-	Concurrency int       `yaml:"concurrency"`
-	RateLimit   string    `yaml:"rate_limit"`
+	Concurrency int    `yaml:"concurrency"`
+	RateLimit   string `yaml:"rate_limit"`
+	// MaxTempSize bounds the temporary disk space used by in-flight package
+	// downloads, for example "4GB" (the default). A package larger than the
+	// budget is still downloaded, alone.
+	MaxTempSize string    `yaml:"max_temp_size"`
 	Retention   Retention `yaml:"retention"`
 }
 
@@ -217,6 +221,9 @@ func (c *Config) Validate() error {
 	if _, err := ParseRate(c.Defaults.RateLimit); err != nil {
 		add("defaults.rate_limit: %v", err)
 	}
+	if _, err := ParseSize(c.Defaults.MaxTempSize); err != nil {
+		add("defaults.max_temp_size: %v", err)
+	}
 	switch c.Log.Level {
 	case "debug", "info", "warn", "error":
 	default:
@@ -367,4 +374,42 @@ func (s Storage) Credentials() (accessKey, secretKey string, err error) {
 		return "", "", fmt.Errorf("environment variables %s and %s must be set", s.AccessKeyEnv, s.SecretKeyEnv)
 	}
 	return accessKey, secretKey, nil
+}
+
+var sizeRe = regexp.MustCompile(`^(\d+)\s*([KMG]?)B$`)
+
+// DefaultMaxTempBytes is the in-flight download budget when none is configured.
+const DefaultMaxTempBytes = 4 << 30
+
+// ParseSize converts a size such as "4GB" into bytes. An empty string yields 0.
+func ParseSize(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, nil
+	}
+	m := sizeRe.FindStringSubmatch(s)
+	if m == nil {
+		return 0, fmt.Errorf("size %q must look like 4GB (units B, KB, MB, GB)", s)
+	}
+	n, err := strconv.ParseInt(m[1], 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	switch m[2] {
+	case "K":
+		n <<= 10
+	case "M":
+		n <<= 20
+	case "G":
+		n <<= 30
+	}
+	return n, nil
+}
+
+// MaxTempBytes returns the configured in-flight download budget in bytes.
+func (d Defaults) MaxTempBytes() int64 {
+	if n, err := ParseSize(d.MaxTempSize); err == nil && n > 0 {
+		return n
+	}
+	return DefaultMaxTempBytes
 }

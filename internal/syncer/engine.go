@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 
 	"courier/internal/config"
 	"courier/internal/fetcher"
@@ -26,6 +27,10 @@ import (
 	"courier/internal/state"
 	"courier/internal/storage"
 )
+
+// unknownSizeWeight is the disk reserved for a package whose size is not known
+// in advance.
+const unknownSizeWeight = 64 << 20
 
 // ErrBusy is returned when a sync of the same repo is already running.
 var ErrBusy = errors.New("sync already running")
@@ -55,13 +60,17 @@ type Engine struct {
 	log      *slog.Logger
 	now      func() time.Time
 
+	// progressEvery is how often transfer progress is logged.
+	progressEvery time.Duration
+
 	mu sync.Mutex
 }
 
 // NewEngine builds an engine for repo using prov.
 func NewEngine(repo config.Repo, defaults config.Defaults, prov provider.Provider, f *fetcher.Fetcher,
 	store storage.Storage, m *observability.Metrics, log *slog.Logger) *Engine {
-	return &Engine{repo: repo, defaults: defaults, prov: prov, fetch: f, store: store, metrics: m, log: log, now: time.Now}
+	return &Engine{repo: repo, defaults: defaults, prov: prov, fetch: f, store: store, metrics: m, log: log, now: time.Now,
+		progressEvery: 30 * time.Second}
 }
 
 func newRunID() string {
@@ -91,6 +100,14 @@ func (e *Engine) Run(ctx context.Context) (res Result, err error) {
 		e.metrics.SyncInProgress.WithLabelValues(name).Set(0)
 		e.metrics.SyncDuration.WithLabelValues(name).Observe(res.Duration.Seconds())
 		if err != nil {
+			if ctx.Err() != nil {
+				// Interrupted (shutdown or a cancelled request), not a failure: nothing
+				// was published, and the next run resumes where this one stopped.
+				e.metrics.SyncRuns.WithLabelValues(name, "cancelled").Inc()
+				log.Info("sync cancelled", "reason", context.Cause(ctx), "duration", res.Duration.Round(time.Millisecond),
+					"downloaded", res.Downloaded, "bytes", res.Bytes)
+				return
+			}
 			e.metrics.SyncRuns.WithLabelValues(name, "failure").Inc()
 			log.Error("sync failed", "error", err, "duration", res.Duration.Round(time.Millisecond))
 			return
@@ -105,7 +122,9 @@ func (e *Engine) Run(ctx context.Context) (res Result, err error) {
 	log.Info("planning")
 	plan, err := e.prov.Plan(ctx)
 	if err != nil {
-		e.metrics.Errors.WithLabelValues(name, "plan", "provider").Inc()
+		if ctx.Err() == nil {
+			e.metrics.Errors.WithLabelValues(name, "plan", "provider").Inc()
+		}
 		return res, fmt.Errorf("plan: %w", err)
 	}
 	if plan.Cleanup != nil {
@@ -151,11 +170,35 @@ func (e *Engine) transfer(ctx context.Context, log *slog.Logger, plan *provider.
 	log.Info("transfer starting", "packages", len(todo))
 
 	var downloaded, skipped, failed, bytes atomic.Int64
+	budget := e.defaults.MaxTempBytes()
+	sem := semaphore.NewWeighted(budget)
+	log.Info("disk budget for in-flight downloads", "bytes", budget, "concurrency", e.defaults.Concurrency)
+
+	done := make(chan struct{})
+	var progress sync.WaitGroup
+	progress.Add(1)
+	go func() {
+		defer progress.Done()
+		tick := time.NewTicker(e.progressEvery)
+		defer tick.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-tick.C:
+				fin := downloaded.Load() + skipped.Load() + failed.Load()
+				e.metrics.Files.WithLabelValues(name, "pending").Set(float64(int64(len(todo)) - fin))
+				log.Info("transfer progress", "done", fin, "of", len(todo), "downloaded", downloaded.Load(),
+					"already_present", skipped.Load(), "failed", failed.Load(), "bytes", bytes.Load())
+			}
+		}
+	}()
+
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(max(1, e.defaults.Concurrency))
 	for _, p := range todo {
 		g.Go(func() error {
-			n, did, err := e.mirrorOne(gctx, p)
+			n, did, err := e.mirrorOne(gctx, p, sem, budget)
 			switch {
 			case err != nil:
 				if ctx.Err() != nil {
@@ -167,6 +210,9 @@ func (e *Engine) transfer(ctx context.Context, log *slog.Logger, plan *provider.
 			case did:
 				downloaded.Add(1)
 				bytes.Add(n)
+				// Count as we go, so throughput is visible while a long sync runs.
+				e.metrics.Bytes.WithLabelValues(name, "downloaded").Add(float64(n))
+				e.metrics.Bytes.WithLabelValues(name, "uploaded").Add(float64(n))
 			default:
 				skipped.Add(1)
 			}
@@ -174,10 +220,10 @@ func (e *Engine) transfer(ctx context.Context, log *slog.Logger, plan *provider.
 		})
 	}
 	_ = g.Wait()
+	close(done)
+	progress.Wait()
 	res.Downloaded, res.Failed, res.Bytes = int(downloaded.Load()), int(failed.Load()), bytes.Load()
 	res.Skipped = int(skipped.Load())
-	e.metrics.Bytes.WithLabelValues(name, "downloaded").Add(float64(res.Bytes))
-	e.metrics.Bytes.WithLabelValues(name, "uploaded").Add(float64(res.Bytes))
 	e.metrics.Files.WithLabelValues(name, "failed").Set(float64(res.Failed))
 	e.metrics.Files.WithLabelValues(name, "pending").Set(0)
 
@@ -192,13 +238,25 @@ func (e *Engine) transfer(ctx context.Context, log *slog.Logger, plan *provider.
 
 // mirrorOne makes sure one package exists in the bucket. did reports whether it
 // was downloaded (false when it was already present).
-func (e *Engine) mirrorOne(ctx context.Context, p provider.Package) (n int64, did bool, err error) {
+func (e *Engine) mirrorOne(ctx context.Context, p provider.Package, sem *semaphore.Weighted, budget int64) (n int64, did bool, err error) {
 	key := e.key(p.Path)
 	if info, err := e.store.Stat(ctx, key); err == nil && (p.Size == 0 || info.Size == p.Size) {
 		return 0, false, nil // already in the bucket (also adopts uploads left by an interrupted run)
 	} else if err != nil && !errors.Is(err, storage.ErrNotFound) {
 		return 0, false, fmt.Errorf("stat %s: %w", key, err)
 	}
+
+	// Reserve disk for the temporary file. A package bigger than the whole budget
+	// is let through on its own rather than never.
+	weight := p.Size
+	if weight <= 0 {
+		weight = unknownSizeWeight
+	}
+	weight = min(weight, budget)
+	if err := sem.Acquire(ctx, weight); err != nil {
+		return 0, false, err
+	}
+	defer sem.Release(weight)
 
 	tmp, err := os.CreateTemp("", "courier-*")
 	if err != nil {
