@@ -48,6 +48,7 @@ func newRPMEnv(t *testing.T) *rpmEnv {
 	defaults := config.Defaults{Concurrency: 4, Retention: config.Retention{GracePeriod: grace}}
 	e.eng = NewEngine(repo, defaults, prov, f, store, observability.NewMetrics("test"), log)
 	e.eng.now = func() time.Time { return e.clock }
+	e.eng.retryPause = time.Millisecond
 	return e
 }
 

@@ -53,7 +53,15 @@ type Defaults struct {
 	// MaxTempSize bounds the temporary disk space used by in-flight package
 	// downloads, for example "4GB" (the default). A package larger than the
 	// budget is still downloaded, alone.
-	MaxTempSize string    `yaml:"max_temp_size"`
+	MaxTempSize string `yaml:"max_temp_size"`
+	// Retries is the number of extra attempts per request (default 5; 0 disables).
+	Retries *int `yaml:"retries"`
+	// RetryBackoff is the first retry delay; it doubles up to one minute, with
+	// jitter (default 2s).
+	RetryBackoff time.Duration `yaml:"retry_backoff"`
+	// RetryRounds is how many times packages that still failed are retried after a
+	// growing pause before the run gives up (default 3; 0 disables).
+	RetryRounds *int      `yaml:"retry_rounds"`
 	Retention   Retention `yaml:"retention"`
 }
 
@@ -223,6 +231,15 @@ func (c *Config) Validate() error {
 	}
 	if _, err := ParseSize(c.Defaults.MaxTempSize); err != nil {
 		add("defaults.max_temp_size: %v", err)
+	}
+	if n := c.Defaults.RetryCount(); n < 0 || n > maxRetrySetting {
+		add("defaults.retries must be between 0 and %d", maxRetrySetting)
+	}
+	if n := c.Defaults.RetryRoundCount(); n < 0 || n > maxRetrySetting {
+		add("defaults.retry_rounds must be between 0 and %d", maxRetrySetting)
+	}
+	if c.Defaults.RetryBackoff < 0 {
+		add("defaults.retry_backoff must not be negative")
 	}
 	switch c.Log.Level {
 	case "debug", "info", "warn", "error":
@@ -412,4 +429,27 @@ func (d Defaults) MaxTempBytes() int64 {
 		return n
 	}
 	return DefaultMaxTempBytes
+}
+
+// Defaults for the retry settings.
+const (
+	DefaultRetries     = 5
+	DefaultRetryRounds = 3
+	maxRetrySetting    = 20
+)
+
+// RetryCount returns the per-request retry count (default 5).
+func (d Defaults) RetryCount() int {
+	if d.Retries == nil {
+		return DefaultRetries
+	}
+	return *d.Retries
+}
+
+// RetryRoundCount returns the number of retry rounds (default 3).
+func (d Defaults) RetryRoundCount() int {
+	if d.RetryRounds == nil {
+		return DefaultRetryRounds
+	}
+	return *d.RetryRounds
 }

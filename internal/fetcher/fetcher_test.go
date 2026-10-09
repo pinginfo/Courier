@@ -141,3 +141,78 @@ func TestRateLimitSlowsDownload(t *testing.T) {
 		t.Fatalf("download took %v; rate limit not applied", d)
 	}
 }
+
+func TestClassifyErrors(t *testing.T) {
+	serve := func(code int) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "x", code) }))
+	}
+	for code, want := range map[int]Class{404: NotFound, 410: NotFound, 403: Permanent, 400: Permanent, 503: Transient, 429: Transient} {
+		srv := serve(code)
+		_, err := New(Options{Retries: 1, Backoff: time.Millisecond}).Bytes(context.Background(), srv.URL, 10)
+		srv.Close()
+		got, ok := Classify(err)
+		if !ok || got != want {
+			t.Errorf("HTTP %d: class = %v (ok=%v), want %v", code, got, ok, want)
+		}
+		var se *StatusError
+		if !errors.As(err, &se) || se.Code != code {
+			t.Errorf("HTTP %d: StatusError no longer reachable through the classification", code)
+		}
+	}
+
+	// A connection that cannot be made is transient once retries are used up.
+	srv := serve(200)
+	srv.Close()
+	_, err := New(Options{Retries: 1, Backoff: time.Millisecond}).Bytes(context.Background(), srv.URL, 10)
+	if got, ok := Classify(err); !ok || got != Transient {
+		t.Errorf("connection refused: class = %v ok=%v, want transient", got, ok)
+	}
+
+	// A parent cancellation is not classified: callers check ctx.Err() themselves.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	srv2 := serve(200)
+	defer srv2.Close()
+	_, err = New(Options{Retries: 1, Backoff: time.Millisecond}).Bytes(ctx, srv2.URL, 10)
+	if _, ok := Classify(err); ok {
+		t.Errorf("a cancelled context must not be classified, got %v", err)
+	}
+
+	// An oversized body is permanent.
+	big := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(make([]byte, 100)) }))
+	defer big.Close()
+	_, err = New(Options{Retries: 1, Backoff: time.Millisecond}).Bytes(context.Background(), big.URL, 10)
+	if got, ok := Classify(err); !ok || got != Permanent {
+		t.Errorf("oversized body: class = %v ok=%v, want permanent", got, ok)
+	}
+}
+
+func TestRetryDelayDoublesIsCappedAndJittered(t *testing.T) {
+	base, limit := time.Second, 10*time.Second
+	for n, nominal := range map[int]time.Duration{1: time.Second, 2: 2 * time.Second, 3: 4 * time.Second, 4: 8 * time.Second, 5: 10 * time.Second, 9: 10 * time.Second} {
+		lo, hi := time.Duration(float64(nominal)*0.75), time.Duration(float64(nominal)*1.25)
+		seen := map[time.Duration]bool{}
+		for i := 0; i < 50; i++ {
+			d := retryDelay(base, limit, n)
+			if d < lo || d > hi {
+				t.Fatalf("retry %d: delay %v outside [%v, %v]", n, d, lo, hi)
+			}
+			seen[d] = true
+		}
+		if len(seen) < 5 {
+			t.Errorf("retry %d: delays are not jittered (%d distinct values)", n, len(seen))
+		}
+	}
+}
+
+func TestNegativeRetriesMeansNone(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		http.Error(w, "x", http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	if _, err := New(Options{Retries: -1}).Bytes(context.Background(), srv.URL, 10); err == nil || calls.Load() != 1 {
+		t.Fatalf("err=%v calls=%d, want a single attempt", err, calls.Load())
+	}
+}

@@ -63,6 +63,7 @@ func newEnv(t *testing.T, handler func(http.Handler) http.Handler) *env {
 	e := &env{t: t, key: key, up: up, store: store, clock: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
 	e.eng = NewEngine(repo, defaults, prov, f, store, observability.NewMetrics("test"), log)
 	e.eng.now = func() time.Time { return e.clock }
+	e.eng.retryPause = time.Millisecond
 	return e
 }
 
@@ -248,7 +249,7 @@ func TestWrongSizeIsRejected(t *testing.T) {
 	a := apktest.BuildPkg(e.key, "busybox", "1.0-r0", "aaa")
 	e.publishUpstream(a)
 	e.up.Set(dir+"/busybox-1.0-r0.apk", append(append([]byte{}, a.Bytes...), 0))
-	if _, err := e.run(); err == nil || !strings.Contains(err.Error(), "failed") {
+	if _, err := e.run(); err == nil || !strings.Contains(err.Error(), "size mismatch") {
 		t.Fatalf("err = %v", err)
 	}
 }

@@ -211,3 +211,36 @@ func TestParseSizeAndTempBudget(t *testing.T) {
 		t.Errorf("bad max_temp_size accepted: %v", err)
 	}
 }
+
+func TestRetrySettings(t *testing.T) {
+	c, err := Parse(strings.NewReader(validYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Defaults.RetryCount() != 5 || c.Defaults.RetryRoundCount() != 3 {
+		t.Errorf("defaults: retries=%d rounds=%d, want 5 and 3", c.Defaults.RetryCount(), c.Defaults.RetryRoundCount())
+	}
+	y := strings.Replace(validYAML, "repos:\n", "defaults:\n  retries: 0\n  retry_rounds: 0\n  retry_backoff: 500ms\nrepos:\n", 1)
+	c, err = Parse(strings.NewReader(y))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Defaults.RetryCount() != 0 || c.Defaults.RetryRoundCount() != 0 || c.Defaults.RetryBackoff != 500*time.Millisecond {
+		t.Errorf("an explicit 0 must disable retries, got retries=%d rounds=%d backoff=%v",
+			c.Defaults.RetryCount(), c.Defaults.RetryRoundCount(), c.Defaults.RetryBackoff)
+	}
+	for name, bad := range map[string]string{
+		"negative retries":   "  retries: -1\n",
+		"too many retries":   "  retries: 500\n",
+		"negative rounds":    "  retry_rounds: -2\n",
+		"too many rounds":    "  retry_rounds: 99\n",
+		"negative backoff":   "  retry_backoff: -1s\n",
+		"unparseable":        "  retries: many\n",
+		"unknown retry knob": "  retry_forever: true\n",
+	} {
+		y := strings.Replace(validYAML, "repos:\n", "defaults:\n"+bad+"repos:\n", 1)
+		if _, err := Parse(strings.NewReader(y)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}

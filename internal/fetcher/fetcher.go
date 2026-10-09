@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"strconv"
@@ -14,6 +15,57 @@ import (
 
 	"golang.org/x/time/rate"
 )
+
+// Defaults for the retry behaviour.
+const (
+	DefaultRetries    = 5
+	DefaultBackoff    = 2 * time.Second
+	DefaultMaxBackoff = time.Minute
+)
+
+// Class says what a caller should do about a failed download.
+type Class int
+
+const (
+	// Transient errors (network trouble, timeouts, stalls, 5xx, 429, 408) may
+	// succeed later; the fetcher already retried them.
+	Transient Class = iota + 1
+	// NotFound is a 404 or 410: the file is not on the server (any more).
+	NotFound
+	// Permanent errors will not go away by retrying (403, other 4xx, local errors).
+	Permanent
+)
+
+func (c Class) String() string {
+	switch c {
+	case Transient:
+		return "transient"
+	case NotFound:
+		return "not_found"
+	case Permanent:
+		return "permanent"
+	default:
+		return "unknown"
+	}
+}
+
+type classified struct {
+	class Class
+	err   error
+}
+
+func (c *classified) Error() string { return c.err.Error() }
+func (c *classified) Unwrap() error { return c.err }
+
+// Classify reports how a download error should be treated. ok is false if err
+// did not come from the fetcher (for example a parent context being cancelled).
+func Classify(err error) (c Class, ok bool) {
+	var ce *classified
+	if errors.As(err, &ce) {
+		return ce.class, true
+	}
+	return 0, false
+}
 
 // Observer receives the status ("200", "404", "error", ...) and latency of each
 // upstream request attempt.
@@ -23,8 +75,9 @@ type Observer func(status string, d time.Duration)
 type Options struct {
 	Client      *http.Client
 	UserAgent   string
-	Retries     int           // attempts after the first; default 3
-	Backoff     time.Duration // first retry delay, doubled each time; default 1s
+	Retries     int           // attempts after the first; 0 = default (5), negative = none
+	Backoff     time.Duration // first retry delay, doubled each time; default 2s
+	MaxBackoff  time.Duration // cap for the retry delay; default 1m
 	StallTime   time.Duration // abort if no bytes arrive for this long; default 60s
 	BytesPerSec int64         // 0 = unlimited
 	Observe     Observer
@@ -36,6 +89,7 @@ type Fetcher struct {
 	ua      string
 	retries int
 	backoff time.Duration
+	maxBack time.Duration
 	stall   time.Duration
 	limiter *rate.Limiter
 	burst   int
@@ -46,7 +100,7 @@ type Fetcher struct {
 func New(o Options) *Fetcher {
 	f := &Fetcher{
 		client: o.Client, ua: o.UserAgent, retries: o.Retries,
-		backoff: o.Backoff, stall: o.StallTime, observe: o.Observe,
+		backoff: o.Backoff, maxBack: o.MaxBackoff, stall: o.StallTime, observe: o.Observe,
 	}
 	if f.client == nil {
 		tr := http.DefaultTransport.(*http.Transport).Clone()
@@ -57,11 +111,17 @@ func New(o Options) *Fetcher {
 	if f.ua == "" {
 		f.ua = "courier"
 	}
-	if f.retries == 0 {
-		f.retries = 3
+	switch {
+	case f.retries == 0:
+		f.retries = DefaultRetries
+	case f.retries < 0:
+		f.retries = 0
 	}
 	if f.backoff == 0 {
-		f.backoff = time.Second
+		f.backoff = DefaultBackoff
+	}
+	if f.maxBack == 0 {
+		f.maxBack = DefaultMaxBackoff
 	}
 	if f.stall == 0 {
 		f.stall = 60 * time.Second
@@ -127,17 +187,28 @@ type permanentError struct{ error }
 
 func (e *permanentError) Unwrap() error { return e.error }
 
+// retryDelay is the wait before retry number n (1-based): base doubled each
+// time, capped at limit, with +-25% jitter so that many downloads that failed
+// together do not all retry together.
+func retryDelay(base, limit time.Duration, n int) time.Duration {
+	d := base
+	for i := 1; i < n && d < limit; i++ {
+		d *= 2
+	}
+	d = min(d, limit)
+	jitter := 0.75 + rand.Float64()*0.5 // #nosec G404 -- spreading retries, not security
+	return time.Duration(float64(d) * jitter)
+}
+
 func (f *Fetcher) do(ctx context.Context, url string, handle func(io.Reader) error) error {
 	var err error
-	delay := f.backoff
 	for attempt := 0; attempt <= f.retries; attempt++ {
 		if attempt > 0 {
 			select {
-			case <-time.After(delay):
+			case <-time.After(retryDelay(f.backoff, f.maxBack, attempt)):
 			case <-ctx.Done():
 				return ctx.Err()
 			}
-			delay *= 2
 		}
 		err = f.once(ctx, url, handle)
 		if err == nil || ctx.Err() != nil {
@@ -145,11 +216,16 @@ func (f *Fetcher) do(ctx context.Context, url string, handle func(io.Reader) err
 		}
 		var se *StatusError
 		var pe *permanentError
-		if errors.As(err, &pe) || (errors.As(err, &se) && !se.retryable()) {
-			return err
+		switch {
+		case errors.As(err, &pe):
+			return &classified{class: Permanent, err: err}
+		case errors.As(err, &se) && se.Code == http.StatusNotFound, errors.As(err, &se) && se.Code == http.StatusGone:
+			return &classified{class: NotFound, err: err}
+		case errors.As(err, &se) && !se.retryable():
+			return &classified{class: Permanent, err: err}
 		}
 	}
-	return fmt.Errorf("after %d attempts: %w", f.retries+1, err)
+	return &classified{class: Transient, err: fmt.Errorf("after %d attempts: %w", f.retries+1, err)}
 }
 
 func (f *Fetcher) once(ctx context.Context, url string, handle func(io.Reader) error) error {

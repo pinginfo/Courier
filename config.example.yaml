@@ -14,6 +14,14 @@ defaults:
   # Cap on temporary disk used by in-flight package downloads. Set the pod's /tmp volume larger
   # than this plus the staged indexes (chart value tmpSize). One package can be 2 GB.
   max_temp_size: 4GB
+  # Retries: each request is retried this many times (default 5) with a delay that starts
+  # at retry_backoff (default 2s), doubles up to 1m, and has random jitter. Packages that still
+  # fail are retried in up to retry_rounds rounds (default 3) after growing pauses; an upstream
+  # 404 triggers a fresh fetch of the index first. 0 disables either. Nothing is published
+  # until every package is confirmed in the bucket.
+  # retries: 5
+  # retry_backoff: 2s
+  # retry_rounds: 3
   rate_limit: 50MB/s
   retention:
     grace_period: 72h

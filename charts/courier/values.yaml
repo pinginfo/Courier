@@ -25,6 +25,9 @@ config:
   defaults:
     concurrency: 8
     max_temp_size: 4GB   # cap on temporary disk used by in-flight downloads
+    # retries: 5         # per request; delay starts at retry_backoff and doubles up to 1m
+    # retry_backoff: 2s
+    # retry_rounds: 3    # extra passes over failed packages, after growing pauses
     retention:
       grace_period: 72h
   repos: []

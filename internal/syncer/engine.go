@@ -14,10 +14,8 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
-	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
 
 	"courier/internal/config"
@@ -37,16 +35,18 @@ var ErrBusy = errors.New("sync already running")
 
 // Result summarises one sync run.
 type Result struct {
-	RunID      string        `json:"run_id"`
-	Started    time.Time     `json:"started"`
-	Duration   time.Duration `json:"duration"`
-	Planned    int           `json:"planned"`
-	Skipped    int           `json:"skipped"`
-	Downloaded int           `json:"downloaded"`
-	Bytes      int64         `json:"bytes"`
-	Failed     int           `json:"failed"`
-	Published  int           `json:"published"`
-	Deleted    int           `json:"deleted"`
+	RunID       string        `json:"run_id"`
+	Started     time.Time     `json:"started"`
+	Duration    time.Duration `json:"duration"`
+	Planned     int           `json:"planned"`
+	Skipped     int           `json:"skipped"`
+	Downloaded  int           `json:"downloaded"`
+	Bytes       int64         `json:"bytes"`
+	Failed      int           `json:"failed"`
+	Published   int           `json:"published"`
+	Deleted     int           `json:"deleted"`
+	RetryRounds int           `json:"retry_rounds"`
+	Replans     int           `json:"replans"`
 }
 
 // Engine syncs one repository.
@@ -63,6 +63,9 @@ type Engine struct {
 	// progressEvery is how often transfer progress is logged.
 	progressEvery time.Duration
 
+	// retryPause is the base pause between retry rounds (grows with the round).
+	retryPause time.Duration
+
 	// disk bounds the temporary files of in-flight downloads (shared, see UseDiskBudget).
 	disk *DiskBudget
 
@@ -73,8 +76,8 @@ type Engine struct {
 func NewEngine(repo config.Repo, defaults config.Defaults, prov provider.Provider, f *fetcher.Fetcher,
 	store storage.Storage, m *observability.Metrics, log *slog.Logger) *Engine {
 	return &Engine{repo: repo, defaults: defaults, prov: prov, fetch: f, store: store, metrics: m, log: log, now: time.Now,
-		progressEvery: 30 * time.Second,
-		disk:          NewDiskBudget(defaults.MaxTempBytes())}
+		progressEvery: 30 * time.Second, retryPause: 30 * time.Second,
+		disk: NewDiskBudget(defaults.MaxTempBytes())}
 }
 
 func newRunID() string {
@@ -124,16 +127,11 @@ func (e *Engine) Run(ctx context.Context) (res Result, err error) {
 	}()
 
 	log.Info("planning")
-	plan, err := e.prov.Plan(ctx)
+	plan, err := e.planWithRetry(ctx, log)
 	if err != nil {
-		if ctx.Err() == nil {
-			e.metrics.Errors.WithLabelValues(name, "plan", "provider").Inc()
-		}
-		return res, fmt.Errorf("plan: %w", err)
+		return res, err
 	}
-	if plan.Cleanup != nil {
-		defer plan.Cleanup()
-	}
+	defer func() { cleanupPlan(plan) }()
 	res.Planned = len(plan.Packages)
 	log.Info("plan ready", "packages", len(plan.Packages), "metadata", len(plan.Metadata))
 
@@ -143,8 +141,49 @@ func (e *Engine) Run(ctx context.Context) (res Result, err error) {
 		return res, err
 	}
 
-	if err := e.transfer(ctx, log, plan, &res); err != nil {
-		return res, err
+	// Rounds: transfer what is not yet confirmed in the bucket; if packages still
+	// fail, pause and go again (re-planning first if any of them vanished
+	// upstream), up to RetryRounds times. Nothing is published until every package
+	// of the final plan is confirmed.
+	confirmed := newConfirmedSet()
+	maxRounds := e.defaults.RetryRoundCount()
+	for round := 0; ; round++ {
+		failures, err := e.transfer(ctx, log.With("round", round+1), confirmed.missing(plan.Packages), confirmed, &res)
+		if err != nil {
+			return res, err
+		}
+		res.Failed = len(failures)
+		if len(failures) == 0 {
+			break
+		}
+		replan, err := e.beforeRetry(ctx, log, round, maxRounds, failures, &res)
+		if err != nil {
+			return res, err
+		}
+		if replan {
+			vanished := vanishedPaths(failures)
+			fresh, err := e.planWithRetry(ctx, log)
+			if err != nil {
+				return res, fmt.Errorf("re-plan: %w", err)
+			}
+			cleanupPlan(plan)
+			plan = fresh
+			res.Planned = len(plan.Packages)
+			res.Replans++
+			e.metrics.Replans.WithLabelValues(name).Inc()
+			log.Info("re-planned after packages vanished upstream", "packages", len(plan.Packages),
+				"vanished", len(vanished), "still_listed", stillListed(plan, vanished))
+		}
+	}
+	res.Failed = 0
+
+	// Last line of defence: never publish an index that refers to a package this
+	// run has not confirmed in the bucket.
+	for _, p := range plan.Packages {
+		if !confirmed.has(p.Path) {
+			e.metrics.Errors.WithLabelValues(name, "publish", "unconfirmed").Inc()
+			return res, fmt.Errorf("refusing to publish: %s is not confirmed in the bucket", p.Path)
+		}
 	}
 
 	if err := e.publish(ctx, log, plan, &res); err != nil {
@@ -161,82 +200,6 @@ func (e *Engine) Run(ctx context.Context) (res Result, err error) {
 	e.metrics.Files.WithLabelValues(name, "pending").Set(0)
 	e.metrics.Files.WithLabelValues(name, "failed").Set(0)
 	return res, nil
-}
-
-// transfer downloads and uploads every package that is not already mirrored.
-// It returns an error if any package failed; metadata must not be published then.
-func (e *Engine) transfer(ctx context.Context, log *slog.Logger, plan *provider.Plan, res *Result) error {
-	name := e.repo.Name
-	// Every package is checked against the bucket, never against the manifest:
-	// the manifest says what we meant to upload, the bucket says what is there.
-	todo := plan.Packages
-	e.metrics.Files.WithLabelValues(name, "pending").Set(float64(len(todo)))
-	log.Info("transfer starting", "packages", len(todo))
-
-	var downloaded, skipped, failed, bytes atomic.Int64
-	budget, sem := e.disk.total, e.disk.sem
-	log.Info("disk budget for in-flight downloads (shared by all repos)", "bytes", budget, "concurrency", e.defaults.Concurrency)
-
-	done := make(chan struct{})
-	var progress sync.WaitGroup
-	progress.Add(1)
-	go func() {
-		defer progress.Done()
-		tick := time.NewTicker(e.progressEvery)
-		defer tick.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case <-tick.C:
-				fin := downloaded.Load() + skipped.Load() + failed.Load()
-				e.metrics.Files.WithLabelValues(name, "pending").Set(float64(int64(len(todo)) - fin))
-				log.Info("transfer progress", "done", fin, "of", len(todo), "downloaded", downloaded.Load(),
-					"already_present", skipped.Load(), "failed", failed.Load(), "bytes", bytes.Load())
-			}
-		}
-	}()
-
-	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(max(1, e.defaults.Concurrency))
-	for _, p := range todo {
-		g.Go(func() error {
-			n, did, err := e.mirrorOne(gctx, p, sem, budget)
-			switch {
-			case err != nil:
-				if ctx.Err() != nil {
-					return ctx.Err()
-				}
-				failed.Add(1)
-				e.metrics.Errors.WithLabelValues(name, "transfer", errorReason(err)).Inc()
-				log.Warn("package failed", "path", p.Path, "error", err)
-			case did:
-				downloaded.Add(1)
-				bytes.Add(n)
-				// Count as we go, so throughput is visible while a long sync runs.
-				e.metrics.Bytes.WithLabelValues(name, "downloaded").Add(float64(n))
-				e.metrics.Bytes.WithLabelValues(name, "uploaded").Add(float64(n))
-			default:
-				skipped.Add(1)
-			}
-			return nil
-		})
-	}
-	_ = g.Wait()
-	close(done)
-	progress.Wait()
-	res.Downloaded, res.Failed, res.Bytes = int(downloaded.Load()), int(failed.Load()), bytes.Load()
-	res.Skipped = int(skipped.Load())
-	e.metrics.Files.WithLabelValues(name, "failed").Set(float64(res.Failed))
-	e.metrics.Files.WithLabelValues(name, "pending").Set(0)
-
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if res.Failed > 0 {
-		return fmt.Errorf("%d of %d packages failed; metadata not published", res.Failed, len(todo))
-	}
-	return nil
 }
 
 // mirrorOne makes sure one package exists in the bucket. did reports whether it

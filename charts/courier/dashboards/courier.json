@@ -187,13 +187,46 @@
       "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
     },
 
-    { "id": 103, "type": "row", "title": "Upstream and S3", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 32 }, "panels": [] },
+    {
+      "id": 22, "type": "timeseries", "title": "Retry rounds",
+      "description": "A retry round means some packages failed (network or S3 trouble, or a download that did not verify) and were retried after a pause. Occasional rounds are normal; constant ones point at an unreliable upstream or network.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "targets": [ { "refId": "A", "legendFormat": "{{repo}}", "expr": "sum by (repo) (increase(courier_sync_retry_rounds_total{job=~\"$job\", repo=~\"$repo\"}[$__rate_interval])) > 0" } ],
+      "fieldConfig": {
+        "defaults": { "unit": "none", "decimals": 0, "min": 0, "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "bars", "fillOpacity": 85, "lineWidth": 1, "showPoints": "never" } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "alpine" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "#3987e5" } } ] },
+          { "matcher": { "id": "byName", "options": "ubuntu" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "#d95926" } } ] },
+          { "matcher": { "id": "byName", "options": "fedora" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "#199e70" } } ] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 23, "type": "timeseries", "title": "Re-plans (packages vanished upstream)",
+      "description": "The repository metadata was fetched again because packages it listed returned 404, usually because upstream replaced them during a long sync. The fresh index is what gets published.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "targets": [ { "refId": "A", "legendFormat": "{{repo}}", "expr": "sum by (repo) (increase(courier_sync_replans_total{job=~\"$job\", repo=~\"$repo\"}[$__rate_interval])) > 0" } ],
+      "fieldConfig": {
+        "defaults": { "unit": "none", "decimals": 0, "min": 0, "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "bars", "fillOpacity": 85, "lineWidth": 1, "showPoints": "never" } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "alpine" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "#3987e5" } } ] },
+          { "matcher": { "id": "byName", "options": "ubuntu" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "#d95926" } } ] },
+          { "matcher": { "id": "byName", "options": "fedora" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "#199e70" } } ] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+
+    { "id": 103, "type": "row", "title": "Upstream and S3", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 40 }, "panels": [] },
 
     {
       "id": 30, "type": "timeseries", "title": "Upstream requests by HTTP status",
       "description": "404s on a distro mirror usually mean a release was removed upstream (for example an end-of-life Fedora release).",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 33 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 41 },
       "targets": [ { "refId": "A", "legendFormat": "{{status}}", "expr": "sum by (status) (rate(courier_upstream_request_duration_seconds_count{job=~\"$job\", repo=~\"$repo\"}[$__rate_interval]))" } ],
       "fieldConfig": {
         "defaults": { "unit": "reqps", "min": 0, "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 0, "showPoints": "never" } },
@@ -208,7 +241,7 @@
     {
       "id": 31, "type": "timeseries", "title": "Upstream response time (p95, until headers)",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 33 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 41 },
       "targets": [ { "refId": "A", "legendFormat": "{{repo}}", "expr": "histogram_quantile(0.95, sum by (le, repo) (rate(courier_upstream_request_duration_seconds_bucket{job=~\"$job\", repo=~\"$repo\"}[$__rate_interval])))" } ],
       "fieldConfig": {
         "defaults": { "unit": "s", "min": 0, "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 0, "showPoints": "never" } },
@@ -223,7 +256,7 @@
     {
       "id": 32, "type": "timeseries", "title": "S3 requests by operation and status",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 41 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 49 },
       "targets": [ { "refId": "A", "legendFormat": "{{op}} {{status}}", "expr": "sum by (op, status) (rate(courier_s3_request_duration_seconds_count{job=~\"$job\"}[$__rate_interval]))" } ],
       "fieldConfig": {
         "defaults": { "unit": "reqps", "min": 0, "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 0, "showPoints": "never" } },
@@ -236,17 +269,17 @@
     {
       "id": 33, "type": "timeseries", "title": "S3 response time (p95)",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 41 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 49 },
       "targets": [ { "refId": "A", "legendFormat": "{{op}}", "expr": "histogram_quantile(0.95, sum by (le, op) (rate(courier_s3_request_duration_seconds_bucket{job=~\"$job\"}[$__rate_interval])))" } ],
       "fieldConfig": { "defaults": { "unit": "s", "min": 0, "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 0, "showPoints": "never" } }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
     },
 
-    { "id": 104, "type": "row", "title": "Process", "collapsed": true, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 49 }, "panels": [
+    { "id": 104, "type": "row", "title": "Process", "collapsed": true, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 57 }, "panels": [
       {
         "id": 40, "type": "timeseries", "title": "Memory (resident)",
         "datasource": { "type": "prometheus", "uid": "${datasource}" },
-        "gridPos": { "h": 7, "w": 8, "x": 0, "y": 50 },
+        "gridPos": { "h": 7, "w": 8, "x": 0, "y": 58 },
         "targets": [ { "refId": "A", "legendFormat": "{{pod}}", "expr": "process_resident_memory_bytes{job=~\"$job\"}" } ],
         "fieldConfig": { "defaults": { "unit": "bytes", "min": 0, "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 0, "showPoints": "never" } }, "overrides": [] },
         "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
@@ -254,7 +287,7 @@
       {
         "id": 41, "type": "timeseries", "title": "CPU",
         "datasource": { "type": "prometheus", "uid": "${datasource}" },
-        "gridPos": { "h": 7, "w": 8, "x": 8, "y": 50 },
+        "gridPos": { "h": 7, "w": 8, "x": 8, "y": 58 },
         "targets": [ { "refId": "A", "legendFormat": "{{pod}}", "expr": "rate(process_cpu_seconds_total{job=~\"$job\"}[$__rate_interval])" } ],
         "fieldConfig": { "defaults": { "unit": "none", "min": 0, "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 0, "showPoints": "never" } }, "overrides": [] },
         "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
@@ -262,7 +295,7 @@
       {
         "id": 42, "type": "timeseries", "title": "Goroutines",
         "datasource": { "type": "prometheus", "uid": "${datasource}" },
-        "gridPos": { "h": 7, "w": 8, "x": 16, "y": 50 },
+        "gridPos": { "h": 7, "w": 8, "x": 16, "y": 58 },
         "targets": [ { "refId": "A", "legendFormat": "{{pod}}", "expr": "go_goroutines{job=~\"$job\"}" } ],
         "fieldConfig": { "defaults": { "unit": "none", "decimals": 0, "min": 0, "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 0, "showPoints": "never" } }, "overrides": [] },
         "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }

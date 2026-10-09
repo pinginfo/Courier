@@ -101,6 +101,28 @@ A full Fedora release is roughly 80k packages and well over 100 GB with updates.
 
 Releases and architectures are plain lists, so adding one is a config change.
 
+## Retries and failures
+
+A small network problem does not stop a sync. Three layers, all configurable under `defaults` (see
+`config.example.yaml`):
+
+1. **Per request** (`retries`, default 5): network errors, timeouts, stalled downloads, 5xx, 429 and 408 are retried with a
+   delay that starts at `retry_backoff` (2s), doubles up to 1 minute and has random jitter (about a minute of patience).
+2. **Retry rounds** (`retry_rounds`, default 3): packages that still failed are retried after a growing pause
+   (30s, 60s, 90s). Only the failed ones are retried, so a round is cheap. This survives an outage of several minutes.
+3. **Re-plan on 404**: if a package returns 404 (upstream replaced it during a long sync), the repository metadata is
+   fetched again before the next round, and the *fresh* index is what gets published. A package that is still listed
+   but missing after the rounds fails the run.
+
+The planning step (fetching the index) is retried the same way for network errors, but not for verification failures such as a bad
+signature or checksum. Downloads that fail verification are re-downloaded in the rounds (every attempt is fully verified, so bad data is
+never accepted) and fail the run if they keep failing.
+
+**Nothing is published until every package of the final plan is confirmed in the bucket.** If the retries run out, the run
+fails (`courier_sync_runs_total{result="failure"}`), nothing is published, and the next run resumes where this one stopped.
+Permanent errors (403 and other 4xx) are not retried. Retries are visible in the log (`some packages failed, retrying after a
+pause`), in `courier_sync_retry_rounds_total` and `courier_sync_replans_total`, and on the dashboard.
+
 ## Concurrency
 
 Repos sync independently and at the same time: each scheduled run, `POST /sync/{repo}` or `courier sync` runs in its

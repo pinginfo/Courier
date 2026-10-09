@@ -88,6 +88,7 @@ func NewRunner(cfg *config.Config, store storage.Storage, m *observability.Metri
 		e := &entry{repo: repo, status: RepoStatus{Name: name, Type: repo.Type, Schedule: repo.Schedule}}
 		f := fetcher.New(fetcher.Options{
 			UserAgent: userAgent, BytesPerSec: bps,
+			Retries: fetcherRetries(cfg.Defaults), Backoff: cfg.Defaults.RetryBackoff,
 			Observe: func(status string, d time.Duration) {
 				m.UpstreamDuration.WithLabelValues(name, status).Observe(d.Seconds())
 			},
@@ -208,4 +209,13 @@ func (r *Runner) Status() []RepoStatus {
 		out = append(out, r.entries[name].status)
 	}
 	return out
+}
+
+// fetcherRetries maps the configured retry count to the fetcher's convention
+// (0 = default, negative = none).
+func fetcherRetries(d config.Defaults) int {
+	if n := d.RetryCount(); n > 0 {
+		return n
+	}
+	return -1
 }

@@ -41,6 +41,8 @@ type Metrics struct {
 	UpstreamDuration *prometheus.HistogramVec
 	S3Duration       *prometheus.HistogramVec
 	GCDeletedObjects *prometheus.CounterVec
+	RetryRounds      *prometheus.CounterVec
+	Replans          *prometheus.CounterVec
 	buildInfo        *prometheus.GaugeVec
 }
 
@@ -83,6 +85,12 @@ func NewMetrics(version string) *Metrics {
 		GCDeletedObjects: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "courier_gc_deleted_objects_total", Help: "Objects deleted by garbage collection.",
 		}, []string{"repo"}),
+		RetryRounds: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "courier_sync_retry_rounds_total", Help: "Rounds in which failed packages were retried after a pause.",
+		}, []string{"repo"}),
+		Replans: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "courier_sync_replans_total", Help: "Times the repository metadata was fetched again because packages vanished upstream.",
+		}, []string{"repo"}),
 		buildInfo: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "courier_build_info", Help: "Build information; value is always 1.",
 		}, []string{"version"}),
@@ -91,7 +99,7 @@ func NewMetrics(version string) *Metrics {
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 		m.SyncRuns, m.SyncDuration, m.SyncLastSuccess, m.SyncInProgress, m.Files,
-		m.Bytes, m.Errors, m.UpstreamDuration, m.S3Duration, m.GCDeletedObjects,
+		m.Bytes, m.Errors, m.UpstreamDuration, m.S3Duration, m.GCDeletedObjects, m.RetryRounds, m.Replans,
 		m.buildInfo,
 	)
 	m.buildInfo.WithLabelValues(version).Set(1)
@@ -103,6 +111,8 @@ func NewMetrics(version string) *Metrics {
 func (m *Metrics) InitRepo(repo string) {
 	m.SyncInProgress.WithLabelValues(repo).Set(0)
 	m.SyncLastSuccess.WithLabelValues(repo).Set(0)
+	m.RetryRounds.WithLabelValues(repo)
+	m.Replans.WithLabelValues(repo)
 	for _, r := range []string{"success", "failure", "cancelled"} {
 		m.SyncRuns.WithLabelValues(repo, r)
 	}
