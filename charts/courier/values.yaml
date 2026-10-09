@@ -50,6 +50,11 @@ replicaCount: 1 # one writer per repo; do not scale out
 service:
   type: ClusterIP
   port: 8080
+  # For a Prometheus without the Operator, scrape by annotation, for example:
+  #   prometheus.io/scrape: "true"
+  #   prometheus.io/port: "8080"
+  #   prometheus.io/path: "/metrics"
+  annotations: {}
 
 resources:
   requests:
@@ -76,3 +81,16 @@ prometheusRule:
   # Alert when a repo has not synced successfully for this many seconds.
   staleAfterSeconds: 86400
 
+
+# Grafana dashboard, shipped as a ConfigMap that the Grafana sidecar picks up.
+# The same file can be imported by hand: charts/courier/dashboards/courier.json
+grafanaDashboard:
+  enabled: false
+  # Label the Grafana dashboard sidecar watches for (kube-prometheus-stack default).
+  labels:
+    grafana_dashboard: "1"
+  # Put the ConfigMap in another namespace (for example Grafana's), if the
+  # sidecar only watches its own namespace. Empty = the release namespace.
+  namespace: ""
+  # Grafana folder to place the dashboard in (needs the sidecar's folder annotation support).
+  folder: ""

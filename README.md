@@ -123,6 +123,41 @@ Logs are JSON on stderr. Every sync log line is tagged with `repo` and `run_id`.
 The Helm chart can create a `ServiceMonitor` and a `PrometheusRule` (`CourierSyncStale`,
 `CourierSyncFailing`, `CourierDown`).
 
+## Monitoring (Prometheus and Grafana)
+
+The chart can create everything needed. All three parts are off by default.
+
+1. **Find the labels your Prometheus selects on.** With kube-prometheus-stack, the Prometheus only picks up
+   `ServiceMonitor` and `PrometheusRule` objects whose labels match its selectors, by default `release: <helm release name>`:
+   ```sh
+   kubectl get prometheus -A -o jsonpath='{range .items[*]}{.metadata.name}{"  "}{.spec.serviceMonitorSelector}{"  "}{.spec.ruleSelector}{"\n"}{end}'
+   ```
+2. **Enable them** in your values file:
+   ```yaml
+   serviceMonitor:
+     enabled: true
+     labels: {release: kube-prometheus-stack}   # whatever step 1 showed
+   prometheusRule:
+     enabled: true
+     labels: {release: kube-prometheus-stack}
+     staleAfterSeconds: 86400                    # alert if a repo has not synced for this long
+   grafanaDashboard:
+     enabled: true                               # ConfigMap labelled grafana_dashboard: "1"
+     # namespace: monitoring                     # if the Grafana sidecar only watches its own namespace
+     # folder: Courier
+   ```
+   then `helm upgrade --install courier charts/courier -f my-values.yaml`.
+3. **Check it works.** In Prometheus (Status, Targets) the `courier` target should be UP; `courier_build_info` should
+   return a series; Grafana should list a dashboard named "Courier" within a minute. No Operator? Set
+   `service.annotations` (`prometheus.io/scrape: "true"`, `prometheus.io/port: "8080"`) for annotation-based scraping,
+   and import `charts/courier/dashboards/courier.json` through Grafana (Dashboards, New, Import).
+
+The dashboard shows, per repo: time since the last successful sync (green under 24h, yellow, red from 48h; adjust
+the thresholds to your schedules), whether a sync is running, packages mirrored and failed, sync runs by result,
+average duration, throughput, errors by stage and reason, garbage-collected objects, upstream and S3 request rates and
+latency, and process memory/CPU. Each repo keeps the same colour in every panel. The alerts are `CourierSyncStale`,
+`CourierSyncFailing` and `CourierDown`.
+
 ## Container image and Kubernetes
 
 ```sh

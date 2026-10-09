@@ -279,3 +279,7 @@ For large files the S3 client uploads in parts. Over plain HTTP, `minio-go` sign
 - **Metadata.** All files listed in `repomd.xml` are mirrored, including the large `filelists` and sqlite/zchunk variants. They are staged on disk; the checksum-named files are immutable, and the previous generation becomes an orphan and is deleted after the grace period. `repomd.xml` (and `.asc`) is published last.
 - **Compression.** zstd (via `klauspost/compress`), gzip and uncompressed `primary.xml`; xz is not supported (Fedora uses zstd).
 - **Paths.** Package locations may contain `^ ~ + %` (about 18% of Fedora 43 packages do); `xml:base` is rejected; md5/sha1 checksums are rejected.
+
+### Monitoring as built
+
+The chart ships a `ServiceMonitor`, a `PrometheusRule` (`CourierSyncStale`, `CourierSyncFailing`, `CourierDown`) and a Grafana dashboard (`charts/courier/dashboards/courier.json`, delivered as a ConfigMap for the Grafana sidecar), all opt-in. `internal/observability/dashboard_test.go` fails if the dashboard queries a metric Courier does not export. Repo series use fixed colours per entity (blue alpine, orange ubuntu, aqua fedora) from the validated first three slots of the data-viz palette; other repo names fall back to the default palette. There is no Loki/log panel: logs are structured JSON on stdout tagged with `repo` and `run_id`, to be collected by whatever the cluster already uses.

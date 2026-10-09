@@ -1,0 +1,270 @@
+{
+  "uid": "courier-overview",
+  "title": "Courier",
+  "description": "Package mirror sync health: freshness, activity, throughput, errors, upstream and S3 latency.",
+  "tags": ["courier", "mirror"],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "1m",
+  "time": { "from": "now-7d", "to": "now" },
+  "timepicker": {},
+  "annotations": { "list": [] },
+  "links": [],
+  "templating": {
+    "list": [
+      { "name": "datasource", "label": "Data source", "type": "datasource", "query": "prometheus", "current": {}, "hide": 0, "refresh": 1 },
+      {
+        "name": "job", "label": "Job", "type": "query", "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "query": { "query": "label_values(courier_build_info, job)", "refId": "job" }, "refresh": 2, "sort": 1,
+        "includeAll": true, "allValue": ".*", "multi": false, "current": {}, "hide": 0
+      },
+      {
+        "name": "repo", "label": "Repo", "type": "query", "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "query": { "query": "label_values(courier_sync_last_success_timestamp_seconds{job=~\"$job\"}, repo)", "refId": "repo" }, "refresh": 2, "sort": 1,
+        "includeAll": true, "allValue": ".*", "multi": true, "current": {}, "hide": 0
+      }
+    ]
+  },
+  "panels": [
+    { "id": 100, "type": "row", "title": "Overview", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "panels": [] },
+
+    {
+      "id": 1, "type": "stat", "title": "Time since last successful sync",
+      "description": "Green under 24h, yellow from 24h, red from 48h. Adjust the thresholds to your schedules. A repo that has never synced shows \"never synced\".",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 5, "w": 9, "x": 0, "y": 1 },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{repo}}", "instant": true,
+          "expr": "(time() - courier_sync_last_success_timestamp_seconds{job=~\"$job\", repo=~\"$repo\"}) and (courier_sync_last_success_timestamp_seconds{job=~\"$job\", repo=~\"$repo\"} > 0)" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s", "decimals": 1, "noValue": "never synced",
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 86400 }, { "color": "red", "value": 172800 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "background", "graphMode": "none", "textMode": "value_and_name", "orientation": "auto", "justifyMode": "center" }
+    },
+    {
+      "id": 2, "type": "stat", "title": "State",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 5, "w": 5, "x": 9, "y": 1 },
+      "targets": [ { "refId": "A", "legendFormat": "{{repo}}", "instant": true, "expr": "courier_sync_in_progress{job=~\"$job\", repo=~\"$repo\"}" } ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null }, { "color": "blue", "value": 1 } ] },
+          "mappings": [ { "type": "value", "options": { "0": { "text": "Idle", "index": 0 }, "1": { "text": "Syncing", "index": 1 } } } ]
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "none", "textMode": "value_and_name", "orientation": "auto", "justifyMode": "center" }
+    },
+    {
+      "id": 3, "type": "stat", "title": "Packages mirrored",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 5, "w": 5, "x": 14, "y": 1 },
+      "targets": [ { "refId": "A", "legendFormat": "{{repo}}", "instant": true, "expr": "courier_files{job=~\"$job\", repo=~\"$repo\", state=\"mirrored\"}" } ],
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 0, "color": { "mode": "fixed", "fixedColor": "text" } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "none", "graphMode": "none", "textMode": "value_and_name", "orientation": "auto", "justifyMode": "center" }
+    },
+    {
+      "id": 4, "type": "stat", "title": "Failed packages (last run)",
+      "description": "Packages that could not be downloaded, verified or uploaded in the most recent run. Any failure blocks publishing the index.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 5, "w": 5, "x": 19, "y": 1 },
+      "targets": [ { "refId": "A", "legendFormat": "{{repo}}", "instant": true, "expr": "courier_files{job=~\"$job\", repo=~\"$repo\", state=\"failed\"}" } ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none", "decimals": 0, "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "background", "graphMode": "none", "textMode": "value_and_name", "orientation": "auto", "justifyMode": "center" }
+    },
+
+    { "id": 101, "type": "row", "title": "Sync activity", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 }, "panels": [] },
+
+    {
+      "id": 10, "type": "timeseries", "title": "Sync runs",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 7 },
+      "targets": [ { "refId": "A", "legendFormat": "{{result}}", "expr": "sum by (result) (increase(courier_sync_runs_total{job=~\"$job\", repo=~\"$repo\"}[$__rate_interval]))" } ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none", "decimals": 0, "min": 0, "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "bars", "fillOpacity": 85, "lineWidth": 1, "stacking": { "mode": "normal", "group": "A" }, "axisPlacement": "auto", "showPoints": "never" }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "success" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } } ] },
+          { "matcher": { "id": "byName", "options": "failure" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 11, "type": "bargauge", "title": "Average sync duration (selected time range)",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 7 },
+      "targets": [ { "refId": "A", "legendFormat": "{{repo}}", "instant": true,
+        "expr": "sum by (repo) (increase(courier_sync_duration_seconds_sum{job=~\"$job\", repo=~\"$repo\"}[$__range])) / sum by (repo) (increase(courier_sync_duration_seconds_count{job=~\"$job\", repo=~\"$repo\"}[$__range]))" } ],
+      "fieldConfig": {
+        "defaults": { "unit": "s", "min": 0, "decimals": 1, "color": { "mode": "palette-classic" }, "noValue": "no runs in range" },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "alpine" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "#3987e5" } } ] },
+          { "matcher": { "id": "byName", "options": "ubuntu" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "#d95926" } } ] },
+          { "matcher": { "id": "byName", "options": "fedora" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "#199e70" } } ] }
+        ]
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "orientation": "horizontal", "displayMode": "basic", "showUnfilled": true, "valueMode": "color" }
+    },
+    {
+      "id": 12, "type": "timeseries", "title": "Packages mirrored",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 15 },
+      "targets": [ { "refId": "A", "legendFormat": "{{repo}}", "expr": "courier_files{job=~\"$job\", repo=~\"$repo\", state=\"mirrored\"}" } ],
+      "fieldConfig": {
+        "defaults": { "unit": "none", "decimals": 0, "min": 0, "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 0, "showPoints": "never", "spanNulls": true } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "alpine" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "#3987e5" } } ] },
+          { "matcher": { "id": "byName", "options": "ubuntu" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "#d95926" } } ] },
+          { "matcher": { "id": "byName", "options": "fedora" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "#199e70" } } ] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 13, "type": "timeseries", "title": "Data transferred",
+      "description": "Bytes downloaded from upstream (and uploaded to S3) per second while syncs run.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 15 },
+      "targets": [ { "refId": "A", "legendFormat": "{{repo}}", "expr": "sum by (repo) (rate(courier_bytes_total{job=~\"$job\", repo=~\"$repo\", direction=\"downloaded\"}[$__rate_interval]))" } ],
+      "fieldConfig": {
+        "defaults": { "unit": "Bps", "min": 0, "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never", "spanNulls": false } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "alpine" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "#3987e5" } } ] },
+          { "matcher": { "id": "byName", "options": "ubuntu" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "#d95926" } } ] },
+          { "matcher": { "id": "byName", "options": "fedora" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "#199e70" } } ] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+
+    { "id": 102, "type": "row", "title": "Errors and cleanup", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 }, "panels": [] },
+
+    {
+      "id": 20, "type": "timeseries", "title": "Errors by repo, stage and reason",
+      "description": "stage: plan, transfer, publish, state, gc. reason for transfer errors: download, verify, size, upload.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "targets": [ { "refId": "A", "legendFormat": "{{repo}} · {{stage}}/{{reason}}", "expr": "sum by (repo, stage, reason) (increase(courier_errors_total{job=~\"$job\", repo=~\"$repo\"}[$__rate_interval])) > 0" } ],
+      "fieldConfig": {
+        "defaults": { "unit": "none", "decimals": 0, "min": 0, "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "bars", "fillOpacity": 85, "lineWidth": 1, "stacking": { "mode": "normal", "group": "A" }, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["sum"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 21, "type": "timeseries", "title": "Objects deleted by garbage collection",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "targets": [ { "refId": "A", "legendFormat": "{{repo}}", "expr": "sum by (repo) (increase(courier_gc_deleted_objects_total{job=~\"$job\", repo=~\"$repo\"}[$__rate_interval])) > 0" } ],
+      "fieldConfig": {
+        "defaults": { "unit": "none", "decimals": 0, "min": 0, "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "bars", "fillOpacity": 85, "lineWidth": 1, "showPoints": "never" } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "alpine" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "#3987e5" } } ] },
+          { "matcher": { "id": "byName", "options": "ubuntu" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "#d95926" } } ] },
+          { "matcher": { "id": "byName", "options": "fedora" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "#199e70" } } ] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+
+    { "id": 103, "type": "row", "title": "Upstream and S3", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 32 }, "panels": [] },
+
+    {
+      "id": 30, "type": "timeseries", "title": "Upstream requests by HTTP status",
+      "description": "404s on a distro mirror usually mean a release was removed upstream (for example an end-of-life Fedora release).",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 33 },
+      "targets": [ { "refId": "A", "legendFormat": "{{status}}", "expr": "sum by (status) (rate(courier_upstream_request_duration_seconds_count{job=~\"$job\", repo=~\"$repo\"}[$__rate_interval]))" } ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "min": 0, "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 0, "showPoints": "never" } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "200" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } } ] },
+          { "matcher": { "id": "byRegexp", "options": "^4.*" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } } ] },
+          { "matcher": { "id": "byRegexp", "options": "^5.*|error" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 31, "type": "timeseries", "title": "Upstream response time (p95, until headers)",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 33 },
+      "targets": [ { "refId": "A", "legendFormat": "{{repo}}", "expr": "histogram_quantile(0.95, sum by (le, repo) (rate(courier_upstream_request_duration_seconds_bucket{job=~\"$job\", repo=~\"$repo\"}[$__rate_interval])))" } ],
+      "fieldConfig": {
+        "defaults": { "unit": "s", "min": 0, "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 0, "showPoints": "never" } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "alpine" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "#3987e5" } } ] },
+          { "matcher": { "id": "byName", "options": "ubuntu" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "#d95926" } } ] },
+          { "matcher": { "id": "byName", "options": "fedora" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "#199e70" } } ] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 32, "type": "timeseries", "title": "S3 requests by operation and status",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 41 },
+      "targets": [ { "refId": "A", "legendFormat": "{{op}} {{status}}", "expr": "sum by (op, status) (rate(courier_s3_request_duration_seconds_count{job=~\"$job\"}[$__rate_interval]))" } ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "min": 0, "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 0, "showPoints": "never" } },
+        "overrides": [
+          { "matcher": { "id": "byRegexp", "options": ".* (4|5).*|.* error" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["sum"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 33, "type": "timeseries", "title": "S3 response time (p95)",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 41 },
+      "targets": [ { "refId": "A", "legendFormat": "{{op}}", "expr": "histogram_quantile(0.95, sum by (le, op) (rate(courier_s3_request_duration_seconds_bucket{job=~\"$job\"}[$__rate_interval])))" } ],
+      "fieldConfig": { "defaults": { "unit": "s", "min": 0, "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 0, "showPoints": "never" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+
+    { "id": 104, "type": "row", "title": "Process", "collapsed": true, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 49 }, "panels": [
+      {
+        "id": 40, "type": "timeseries", "title": "Memory (resident)",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "gridPos": { "h": 7, "w": 8, "x": 0, "y": 50 },
+        "targets": [ { "refId": "A", "legendFormat": "{{pod}}", "expr": "process_resident_memory_bytes{job=~\"$job\"}" } ],
+        "fieldConfig": { "defaults": { "unit": "bytes", "min": 0, "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 0, "showPoints": "never" } }, "overrides": [] },
+        "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+      },
+      {
+        "id": 41, "type": "timeseries", "title": "CPU",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "gridPos": { "h": 7, "w": 8, "x": 8, "y": 50 },
+        "targets": [ { "refId": "A", "legendFormat": "{{pod}}", "expr": "rate(process_cpu_seconds_total{job=~\"$job\"}[$__rate_interval])" } ],
+        "fieldConfig": { "defaults": { "unit": "none", "min": 0, "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 0, "showPoints": "never" } }, "overrides": [] },
+        "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+      },
+      {
+        "id": 42, "type": "timeseries", "title": "Goroutines",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "gridPos": { "h": 7, "w": 8, "x": 16, "y": 50 },
+        "targets": [ { "refId": "A", "legendFormat": "{{pod}}", "expr": "go_goroutines{job=~\"$job\"}" } ],
+        "fieldConfig": { "defaults": { "unit": "none", "decimals": 0, "min": 0, "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 0, "showPoints": "never" } }, "overrides": [] },
+        "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+      }
+    ] }
+  ]
+}

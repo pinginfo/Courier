@@ -1,0 +1,19 @@
+{{- if .Values.grafanaDashboard.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "courier.fullname" . }}-dashboard
+  {{- with .Values.grafanaDashboard.namespace }}
+  namespace: {{ . }}
+  {{- end }}
+  labels:
+    {{- include "courier.labels" . | nindent 4 }}
+    {{- toYaml .Values.grafanaDashboard.labels | nindent 4 }}
+  {{- with .Values.grafanaDashboard.folder }}
+  annotations:
+    grafana_folder: {{ . | quote }}
+  {{- end }}
+data:
+  courier.json: |-
+{{ .Files.Get "dashboards/courier.json" | indent 4 }}
+{{- end }}
