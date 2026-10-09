@@ -1,0 +1,4 @@
+/bin/
+*.test
+*.out
+.claude/settings.local.json

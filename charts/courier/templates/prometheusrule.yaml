@@ -1,0 +1,37 @@
+{{- if .Values.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "courier.fullname" . }}
+  labels:
+    {{- include "courier.labels" . | nindent 4 }}
+    {{- with .Values.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: courier
+      rules:
+        - alert: CourierSyncStale
+          expr: time() - courier_sync_last_success_timestamp_seconds > {{ .Values.prometheusRule.staleAfterSeconds }}
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Courier repo {{ "{{ $labels.repo }}" }} has not synced successfully recently"
+            description: "No successful sync of {{ "{{ $labels.repo }}" }} within {{ .Values.prometheusRule.staleAfterSeconds }}s. Check the courier logs filtered by repo."
+        - alert: CourierSyncFailing
+          expr: increase(courier_sync_runs_total{result="failure"}[6h]) >= 3
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Courier repo {{ "{{ $labels.repo }}" }} sync keeps failing"
+        - alert: CourierDown
+          expr: absent(up{job=~".*courier.*"} == 1)
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Courier is not being scraped or is down"
+{{- end }}
