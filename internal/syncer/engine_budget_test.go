@@ -58,7 +58,7 @@ func TestDiskBudgetBoundsConcurrentDownloads(t *testing.T) {
 	e.eng.defaults.Concurrency = 6
 	size := len(pkgs[0].Bytes)
 	// Room for exactly two packages at a time.
-	e.eng.defaults.MaxTempSize = fmt.Sprintf("%dB", 2*size+50)
+	e.eng.UseDiskBudget(NewDiskBudget(int64(2*size + 50)))
 
 	res := e.mustRun()
 	if res.Downloaded != 8 {
@@ -77,7 +77,7 @@ func TestPackageLargerThanBudgetStillDownloadsAlone(t *testing.T) {
 	e := newEnv(t, probe.wrap)
 	e.publishUpstream(manyPackages(e, 4)...)
 	e.eng.defaults.Concurrency = 4
-	e.eng.defaults.MaxTempSize = "1B" // smaller than every package
+	e.eng.UseDiskBudget(NewDiskBudget(1)) // smaller than every package
 
 	done := make(chan Result, 1)
 	go func() { done <- e.mustRun() }()
@@ -180,4 +180,59 @@ func (s *syncWriter) Write(p []byte) (int, error) {
 
 func slogTo(b *strings.Builder) *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Writer(&syncWriter{w: b}), nil))
+}
+
+// Two repos syncing at the same moment must share one disk budget.
+func TestDiskBudgetIsSharedAcrossRepos(t *testing.T) {
+	probe := &concurrencyProbe{hold: 60 * time.Millisecond}
+	a := newEnv(t, probe.wrap)
+	b := newEnv(t, probe.wrap)
+	a.publishUpstream(manyPackages(a, 6)...)
+	b.publishUpstream(manyPackages(b, 6)...)
+
+	size := len(manyPackages(a, 1)[0].Bytes)
+	shared := NewDiskBudget(int64(2*size + 50)) // room for two packages in total
+	for _, e := range []*env{a, b} {
+		e.eng.defaults.Concurrency = 4
+		e.eng.UseDiskBudget(shared)
+	}
+
+	var wg sync.WaitGroup
+	for _, e := range []*env{a, b} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if res := e.mustRun(); res.Downloaded != 6 {
+				t.Errorf("result = %+v", res)
+			}
+		}()
+	}
+	wg.Wait()
+	if got := probe.max.Load(); got > 2 {
+		t.Fatalf("%d downloads in flight across two repos; the shared budget allows 2", got)
+	}
+}
+
+// Without sharing (the old behaviour) the same load overshoots: this guards
+// the test above against passing for the wrong reason.
+func TestSeparateBudgetsAddUp(t *testing.T) {
+	probe := &concurrencyProbe{hold: 60 * time.Millisecond}
+	a := newEnv(t, probe.wrap)
+	b := newEnv(t, probe.wrap)
+	a.publishUpstream(manyPackages(a, 6)...)
+	b.publishUpstream(manyPackages(b, 6)...)
+	size := len(manyPackages(a, 1)[0].Bytes)
+	for _, e := range []*env{a, b} {
+		e.eng.defaults.Concurrency = 4
+		e.eng.UseDiskBudget(NewDiskBudget(int64(2*size + 50)))
+	}
+	var wg sync.WaitGroup
+	for _, e := range []*env{a, b} {
+		wg.Add(1)
+		go func() { defer wg.Done(); e.mustRun() }()
+	}
+	wg.Wait()
+	if got := probe.max.Load(); got < 3 {
+		t.Skipf("runs did not overlap enough to show the effect (max %d)", got)
+	}
 }

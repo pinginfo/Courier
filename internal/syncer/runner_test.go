@@ -48,3 +48,27 @@ func TestUnsupportedRepoIsListedButNotRunnable(t *testing.T) {
 		t.Fatalf("err = %v, want ErrUnknownRepo", err)
 	}
 }
+
+func TestRunnerSharesOneDiskBudgetAcrossRepos(t *testing.T) {
+	_, keys := apkKeys(t)
+	repo := func(name string) config.Repo {
+		return config.Repo{
+			Name: name, Type: config.TypeAPK, Upstream: "https://example.org", Prefix: name, Schedule: "0 4 * * *",
+			APK: &config.APK{Branches: []string{"v3.20"}, Repos: []string{"main"}, Architectures: []string{"x86_64"}, KeysDir: keys},
+		}
+	}
+	cfg := &config.Config{Defaults: config.Defaults{Concurrency: 2, MaxTempSize: "1GB"}, Repos: []config.Repo{repo("a"), repo("b"), repo("c")}}
+	r, err := NewRunner(cfg, storage.NewMemory(), observability.NewMetrics("test"), slog.New(slog.NewTextHandler(io.Discard, nil)), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := r.entries["a"].engine.disk
+	for _, name := range []string{"b", "c"} {
+		if r.entries[name].engine.disk != first {
+			t.Fatalf("repo %s has its own disk budget; it must share one with the others", name)
+		}
+	}
+	if first.total != 1<<30 {
+		t.Fatalf("budget = %d, want 1 GiB", first.total)
+	}
+}

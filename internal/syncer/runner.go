@@ -82,6 +82,7 @@ func NewRunner(cfg *config.Config, store storage.Storage, m *observability.Metri
 		return nil, err
 	}
 	r := &Runner{log: log, entries: map[string]*entry{}, cron: cron.New()}
+	disk := NewDiskBudget(cfg.Defaults.MaxTempBytes())
 	for _, repo := range cfg.Repos {
 		name := repo.Name
 		e := &entry{repo: repo, status: RepoStatus{Name: name, Type: repo.Type, Schedule: repo.Schedule}}
@@ -95,6 +96,7 @@ func NewRunner(cfg *config.Config, store storage.Storage, m *observability.Metri
 		switch {
 		case err == nil:
 			e.engine = NewEngine(repo, cfg.Defaults, prov, f, store, m, log)
+			e.engine.UseDiskBudget(disk)
 		case !errors.Is(err, ErrUnsupported):
 			return nil, fmt.Errorf("repo %s: %w", name, err)
 		default:

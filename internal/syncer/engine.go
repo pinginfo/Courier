@@ -63,6 +63,9 @@ type Engine struct {
 	// progressEvery is how often transfer progress is logged.
 	progressEvery time.Duration
 
+	// disk bounds the temporary files of in-flight downloads (shared, see UseDiskBudget).
+	disk *DiskBudget
+
 	mu sync.Mutex
 }
 
@@ -70,7 +73,8 @@ type Engine struct {
 func NewEngine(repo config.Repo, defaults config.Defaults, prov provider.Provider, f *fetcher.Fetcher,
 	store storage.Storage, m *observability.Metrics, log *slog.Logger) *Engine {
 	return &Engine{repo: repo, defaults: defaults, prov: prov, fetch: f, store: store, metrics: m, log: log, now: time.Now,
-		progressEvery: 30 * time.Second}
+		progressEvery: 30 * time.Second,
+		disk:          NewDiskBudget(defaults.MaxTempBytes())}
 }
 
 func newRunID() string {
@@ -170,9 +174,8 @@ func (e *Engine) transfer(ctx context.Context, log *slog.Logger, plan *provider.
 	log.Info("transfer starting", "packages", len(todo))
 
 	var downloaded, skipped, failed, bytes atomic.Int64
-	budget := e.defaults.MaxTempBytes()
-	sem := semaphore.NewWeighted(budget)
-	log.Info("disk budget for in-flight downloads", "bytes", budget, "concurrency", e.defaults.Concurrency)
+	budget, sem := e.disk.total, e.disk.sem
+	log.Info("disk budget for in-flight downloads (shared by all repos)", "bytes", budget, "concurrency", e.defaults.Concurrency)
 
 	done := make(chan struct{})
 	var progress sync.WaitGroup
@@ -427,3 +430,19 @@ func (e *Engine) putMetadata(ctx context.Context, m provider.Metadata, contentTy
 	}
 	return nil
 }
+
+// DiskBudget limits the temporary disk used by in-flight package downloads. One
+// budget is shared by every engine in the process, so syncing several repos at
+// the same time cannot add up to more than the configured total.
+type DiskBudget struct {
+	sem   *semaphore.Weighted
+	total int64
+}
+
+// NewDiskBudget returns a budget of total bytes.
+func NewDiskBudget(total int64) *DiskBudget {
+	return &DiskBudget{sem: semaphore.NewWeighted(total), total: total}
+}
+
+// UseDiskBudget makes the engine draw from a shared budget instead of its own.
+func (e *Engine) UseDiskBudget(b *DiskBudget) { e.disk = b }

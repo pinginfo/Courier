@@ -101,6 +101,17 @@ A full Fedora release is roughly 80k packages and well over 100 GB with updates.
 
 Releases and architectures are plain lists, so adding one is a config change.
 
+## Concurrency
+
+Repos sync independently and at the same time: each scheduled run, `POST /sync/{repo}` or `courier sync` runs in its
+own goroutine, and a second sync of the *same* repo is refused (`409` on the API). Per repo, `defaults.concurrency`
+(default 8) packages download in parallel, so three repos can mean 24 parallel downloads. Two limits are worth knowing:
+
+- `defaults.max_temp_size` is a **single budget for the whole process**, shared by all repos.
+- `defaults.rate_limit` applies **per repo**, so the total bandwidth can reach the limit times the number of repos syncing.
+
+Stagger the `schedule` of large repos if you want them to run one after another.
+
 ## Observability
 
 Metrics are exposed at `/metrics`:
