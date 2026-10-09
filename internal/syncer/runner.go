@@ -15,6 +15,7 @@ import (
 	"courier/internal/observability"
 	"courier/internal/provider"
 	"courier/internal/provider/apk"
+	"courier/internal/provider/apt"
 	"courier/internal/storage"
 )
 
@@ -62,8 +63,10 @@ func NewProvider(repo config.Repo, f *fetcher.Fetcher, log *slog.Logger) (provid
 	switch repo.Type {
 	case config.TypeAPK:
 		return apk.New(repo, f, log)
+	case config.TypeAPT:
+		return apt.New(repo, f, log)
 	default:
-		return nil, fmt.Errorf("type %q is not implemented yet", repo.Type)
+		return nil, fmt.Errorf("%w: type %q", ErrUnsupported, repo.Type)
 	}
 }
 
@@ -89,7 +92,7 @@ func NewRunner(cfg *config.Config, store storage.Storage, m *observability.Metri
 		switch {
 		case err == nil:
 			e.engine = NewEngine(repo, cfg.Defaults, prov, f, store, m, log)
-		case repo.Type == config.TypeAPK:
+		case !errors.Is(err, ErrUnsupported):
 			return nil, fmt.Errorf("repo %s: %w", name, err)
 		default:
 			e.status.Unsupported = err.Error()

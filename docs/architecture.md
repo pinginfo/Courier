@@ -257,3 +257,17 @@ Structured JSON via `log/slog` to stdout. Every line carries `repo` and `run_id`
 ### MinIO status (important for the S3 backend)
 
 The open-source MinIO server and `mc` are archived upstream: no further releases, security updates, or downloadable binaries. Courier only uses the standard S3 API (path-style, Put/Get/Stat/Delete/BucketExists), so it should work with any S3-compatible store (for example Garage, SeaweedFS, Ceph RGW, or a commercial MinIO build). Consider the long-term plan for the store that holds the mirror. The S3 layer is tested against an in-process fake S3 server, not against a real MinIO.
+
+### APT provider (as built)
+
+- **Trust chain.** `InRelease` is verified with OpenPGP (`gpg_keyring`, optional); `Release.gpg` is verified against `Release` when present. Every index file is checked for size and SHA-256 against the signed `Release`, and every package against the SHA-256 in `Packages`. Without a keyring Courier logs a warning and still enforces the hash chain (which then only protects against corruption, not a malicious upstream); clients verify the signatures themselves either way. Checked against the real Ubuntu noble `InRelease`/`Release.gpg` and archive keyring.
+- **Selection.** Per suite, only the configured components and architectures: `Packages` (all listed compressions), the per-arch `Release`, `Translation-<lang>` and optionally `Contents-<arch>`. Source packages, `dep11`, `cnf` and debian-installer are not mirrored.
+- **Listed but not served.** Ubuntu's `Release` lists uncompressed `Packages`/`Translation-*` files that the archive does not serve (not even under `by-hash`); apt only uses their hashes. A 404 for an uncompressed variant with a compressed sibling is skipped; a 404 for anything else fails the plan.
+- **by-hash.** When the suite sets `Acquire-By-Hash: yes`, each index file is also published at `<dir>/by-hash/SHA256/<hash>`. Old by-hash objects go through the normal orphan grace period, so a client that read an older `InRelease` can still fetch its indexes.
+- **Publish order.** by-hash copies, index files, then `Release.gpg`, `Release`, and `InRelease` last. Index files are staged on disk (not in memory) and removed when the run ends.
+- **Shared pool.** Packages are keyed by `pool/...` path and de-duplicated across suites.
+- **Limits.** Indexes offered only as `.xz` are not supported (stdlib has no xz); Ubuntu and Debian both offer `.gz`.
+
+### Uploads over plain HTTP
+
+For large files the S3 client uploads in parts. Over plain HTTP, `minio-go` signs those parts with chunked payload signatures, which a store must decode; a store that does not will keep extra bytes. Courier's post-upload size check turns that into a failed package instead of a corrupt mirror. Prefer TLS (`use_ssl: true`, with `ca_file` for a private CA) for the S3 endpoint.

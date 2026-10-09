@@ -25,7 +25,7 @@ Early but functional for Alpine. What works today:
 - Config loading and validation, structured JSON logs, Prometheus metrics, health endpoints.
 - Dockerfile and Helm chart (with optional ServiceMonitor and alert rules).
 
-**Not implemented yet:** the APT (Ubuntu) and RPM (Fedora) providers. Repos of those types are
+**Not implemented yet:** the RPM (Fedora) provider. Repos of that type are
 listed in `/status` as `unsupported` and are not scheduled. See the delivery plan in
 [docs/architecture.md](docs/architecture.md#11-delivery-plan).
 
@@ -84,6 +84,14 @@ Package signatures are never altered: files are copied byte-for-byte, and your c
 their own keys. For Alpine you can optionally set `apk.keys_dir` (a directory of trusted `*.rsa.pub` keys from
 https://alpinelinux.org/keys/) so that Courier also verifies the upstream index before mirroring it; if unset,
 Courier logs a warning and mirrors the index unverified.
+
+For Ubuntu/Debian, `gpg_keyring` is an optional OpenPGP keyring file (binary or armored), for example
+`ubuntu-archive-keyring.gpg` from https://archive.ubuntu.com/ubuntu/project/. `apt.languages` (default `[en]`)
+selects the `Translation-*` files and `apt.contents: true` adds the very large `Contents-<arch>` indexes. Source
+packages, `dep11`, `cnf` and debian-installer indexes are not mirrored.
+
+**Size warning:** a full Ubuntu release is hundreds of GB per architecture (`main` plus `universe`). Start with
+a single suite, component and architecture.
 
 Releases and architectures are plain lists, so adding one is a config change.
 
@@ -154,7 +162,7 @@ internal/config/        config loading and validation
 internal/observability/ logging and Prometheus metrics
 internal/server/        HTTP endpoints
 internal/syncer/        sync engine, runner (scheduler + status)
-internal/provider/      provider interface; apk/ implementation
+internal/provider/      provider interface; apk/ and apt/ implementations
 internal/storage/       S3 (minio-go) and in-memory stores
 internal/fetcher/       HTTP downloads: retries, rate limit, stall detection
 internal/state/         per-repo manifest stored in the bucket

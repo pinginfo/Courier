@@ -108,6 +108,9 @@ func (e *Engine) Run(ctx context.Context) (res Result, err error) {
 		e.metrics.Errors.WithLabelValues(name, "plan", "provider").Inc()
 		return res, fmt.Errorf("plan: %w", err)
 	}
+	if plan.Cleanup != nil {
+		defer plan.Cleanup()
+	}
 	res.Planned = len(plan.Packages)
 	log.Info("plan ready", "packages", len(plan.Packages), "metadata", len(plan.Metadata))
 
@@ -260,7 +263,7 @@ func (e *Engine) publish(ctx context.Context, log *slog.Logger, plan *provider.P
 		if ct == "" {
 			ct = "application/octet-stream"
 		}
-		if err := e.store.Put(ctx, e.key(m.Path), bytes.NewReader(m.Body), int64(len(m.Body)), ct); err != nil {
+		if err := e.putMetadata(ctx, m, ct); err != nil {
 			e.metrics.Errors.WithLabelValues(e.repo.Name, "publish", "upload").Inc()
 			return fmt.Errorf("publish %s: %w", m.Path, err)
 		}
@@ -330,4 +333,39 @@ func (e *Engine) collect(ctx context.Context, log *slog.Logger, next *state.Mani
 		log.Info("gc finished", "deleted", deleted, "grace_pending", len(next.Orphans))
 	}
 	return deleted
+}
+
+// putMetadata uploads one metadata file from memory or from its staged local
+// file, then confirms it is in the bucket with the right size.
+func (e *Engine) putMetadata(ctx context.Context, m provider.Metadata, contentType string) error {
+	key := e.key(m.Path)
+	var (
+		r    io.Reader = bytes.NewReader(m.Body)
+		size           = int64(len(m.Body))
+	)
+	if m.File != "" {
+		f, err := os.Open(m.File) // #nosec G304 G703 -- staged by the provider in its own temp dir
+		if err != nil {
+			return err
+		}
+		defer func() { _ = f.Close() }()
+		st, err := f.Stat()
+		if err != nil {
+			return err
+		}
+		r, size = f, st.Size()
+	}
+	if err := e.store.Put(ctx, key, r, size, contentType); err != nil {
+		return err
+	}
+	info, err := e.store.Stat(ctx, key)
+	switch {
+	case errors.Is(err, storage.ErrNotFound):
+		return fmt.Errorf("%s was accepted but is not in the bucket", key)
+	case err != nil:
+		return err
+	case info.Size != size:
+		return fmt.Errorf("%s has %d bytes in the bucket, expected %d", key, info.Size, size)
+	}
+	return nil
 }

@@ -15,6 +15,10 @@ type Provider interface {
 
 // Plan is the desired state of one repository.
 type Plan struct {
+	// Cleanup, if set, is called by the engine when the run ends (success or
+	// failure) to remove temporary files referenced by Metadata.File.
+	Cleanup func()
+
 	// Packages are immutable payload files. Paths are relative to the upstream
 	// root and to the repo's bucket prefix.
 	Packages []Package
@@ -33,9 +37,12 @@ type Package struct {
 	Verify func(localPath string) error
 }
 
-// Metadata is an index file whose verified bytes are published as-is.
+// Metadata is an index file whose verified content is published as-is. The
+// content is either Body (small files) or the local file at File (large files,
+// which the provider has already verified).
 type Metadata struct {
 	Path        string
 	Body        []byte
+	File        string
 	ContentType string
 }

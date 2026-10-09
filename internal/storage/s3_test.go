@@ -1,37 +1,22 @@
-package storage
+package storage_test
 
 import (
 	"context"
 	"errors"
 	"io"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/johannesboyne/gofakes3"
-	"github.com/johannesboyne/gofakes3/backend/s3mem"
-
 	"courier/internal/config"
+	"courier/internal/storage"
+	"courier/internal/storage/storagetest"
 )
 
-// newFakeS3 starts an in-process S3 server with the bucket "mirror" and returns
-// a Storage connected to it through the real minio-go code path.
-func newFakeS3(t *testing.T, obs Observer) *S3 {
+func newFakeS3(t *testing.T, obs storage.Observer) *storage.S3 {
 	t.Helper()
-	backend := s3mem.New()
-	if err := backend.CreateBucket("mirror"); err != nil {
-		t.Fatal(err)
-	}
-	srv := httptest.NewServer(gofakes3.New(backend).Server())
-	t.Cleanup(srv.Close)
-	t.Setenv("COURIER_T_AK", "test")
-	t.Setenv("COURIER_T_SK", "testtest")
-	s, err := NewS3(config.Storage{
-		Endpoint: strings.TrimPrefix(srv.URL, "http://"), Bucket: "mirror", Region: "us-east-1",
-		PathStyle: true, AccessKeyEnv: "COURIER_T_AK", SecretKeyEnv: "COURIER_T_SK",
-	}, obs)
+	s, err := storage.NewS3(storagetest.Start(t), obs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,10 +36,10 @@ func TestS3RoundTrip(t *testing.T) {
 	if err := s.Ping(ctx); err != nil {
 		t.Fatalf("ping: %v", err)
 	}
-	if _, err := s.Stat(ctx, "a/b.txt"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Stat(ctx, "a/b.txt"); !errors.Is(err, storage.ErrNotFound) {
 		t.Fatalf("stat missing: %v", err)
 	}
-	if _, err := s.Get(ctx, "a/b.txt"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Get(ctx, "a/b.txt"); !errors.Is(err, storage.ErrNotFound) {
 		t.Fatalf("get missing: %v", err)
 	}
 	if err := s.Put(ctx, "a/b.txt", strings.NewReader("hello"), 5, "text/plain"); err != nil {
@@ -79,7 +64,7 @@ func TestS3RoundTrip(t *testing.T) {
 	if err := s.Delete(ctx, "a/b.txt"); err != nil {
 		t.Fatalf("deleting a missing object must succeed: %v", err)
 	}
-	if _, err := s.Stat(ctx, "a/b.txt"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Stat(ctx, "a/b.txt"); !errors.Is(err, storage.ErrNotFound) {
 		t.Fatalf("stat after delete: %v", err)
 	}
 	mu.Lock()
@@ -90,24 +75,28 @@ func TestS3RoundTrip(t *testing.T) {
 }
 
 func TestS3PingFailsForMissingBucket(t *testing.T) {
-	s := newFakeS3(t, nil)
-	s.bucket = "does-not-exist"
+	cfg := storagetest.Start(t)
+	cfg.Bucket = "does-not-exist"
+	s, err := storage.NewS3(cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := s.Ping(context.Background()); err == nil {
 		t.Fatal("expected error for a missing bucket")
 	}
 }
 
 func TestNewS3NeedsCredentials(t *testing.T) {
-	_, err := NewS3(config.Storage{Endpoint: "x:9000", Bucket: "b", AccessKeyEnv: "COURIER_UNSET_A", SecretKeyEnv: "COURIER_UNSET_B"}, nil)
+	_, err := storage.NewS3(config.Storage{Endpoint: "x:9000", Bucket: "b", AccessKeyEnv: "COURIER_UNSET_A", SecretKeyEnv: "COURIER_UNSET_B"}, nil)
 	if err == nil {
 		t.Fatal("expected credentials error")
 	}
 }
 
 func TestMemoryMatchesContract(t *testing.T) {
-	m := NewMemory()
+	m := storage.NewMemory()
 	ctx := context.Background()
-	if _, err := m.Get(ctx, "x"); !errors.Is(err, ErrNotFound) {
+	if _, err := m.Get(ctx, "x"); !errors.Is(err, storage.ErrNotFound) {
 		t.Fatal(err)
 	}
 	_ = m.Put(ctx, "x", strings.NewReader("1"), 1, "")
@@ -115,7 +104,7 @@ func TestMemoryMatchesContract(t *testing.T) {
 		t.Fatal(info, err)
 	}
 	_ = m.Delete(ctx, "x")
-	if _, err := m.Stat(ctx, "x"); !errors.Is(err, ErrNotFound) {
+	if _, err := m.Stat(ctx, "x"); !errors.Is(err, storage.ErrNotFound) {
 		t.Fatal(err)
 	}
 }

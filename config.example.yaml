@@ -21,11 +21,15 @@ repos:
     upstream: https://archive.ubuntu.com/ubuntu
     prefix: ubuntu
     schedule: "0 */6 * * *"
-    gpg_keyring: /etc/courier/keys/ubuntu-archive.gpg
+    # Optional: verify the upstream Release signature before mirroring. Without it the
+    # signed files are mirrored unchanged and apt still verifies them on the clients.
+    # gpg_keyring: /etc/courier/keys/ubuntu/ubuntu-archive-keyring.gpg
     apt:
       suites: [noble, noble-updates, noble-security]
       components: [main, universe]
       architectures: [amd64]
+      # languages: [en]   # i18n Translation-<lang> files to mirror (default: en)
+      # contents: false   # also mirror the very large Contents-<arch> indexes (apt-file)
 
   - name: fedora
     type: rpm

@@ -77,6 +77,12 @@ type APT struct {
 	Suites        []string `yaml:"suites"`
 	Components    []string `yaml:"components"`
 	Architectures []string `yaml:"architectures"`
+	// Languages selects which i18n Translation-<lang> files are mirrored.
+	// Defaults to ["en"].
+	Languages []string `yaml:"languages"`
+	// Contents also mirrors the (very large) Contents-<arch> indexes used by
+	// apt-file. Off by default.
+	Contents bool `yaml:"contents"`
 }
 
 // RPM filters for a Fedora-style repository.
@@ -281,6 +287,11 @@ func validateTypeSection(where string, r Repo) []error {
 		need("apt", r.APT != nil, nil)
 		if r.APT != nil {
 			need("apt", true, map[string][]string{"suites": r.APT.Suites, "components": r.APT.Components, "architectures": r.APT.Architectures})
+			for _, l := range r.APT.Languages {
+				if !segmentRe.MatchString(l) {
+					errs = append(errs, fmt.Errorf("%s: apt.languages: %q is not a valid language code", where, l))
+				}
+			}
 		}
 	case TypeRPM:
 		need("rpm", r.RPM != nil, nil)

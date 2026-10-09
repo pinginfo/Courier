@@ -17,8 +17,8 @@ func testRunner(t *testing.T) *Runner {
 	cfg := &config.Config{
 		Defaults: config.Defaults{Concurrency: 2},
 		Repos: []config.Repo{{
-			Name: "ubuntu", Type: config.TypeAPT, Upstream: "https://example.org", Prefix: "ubuntu", Schedule: "0 4 * * *",
-			APT: &config.APT{Suites: []string{"noble"}, Components: []string{"main"}, Architectures: []string{"amd64"}},
+			Name: "fedora", Type: config.TypeRPM, Upstream: "https://example.org", Prefix: "fedora", Schedule: "0 4 * * *",
+			RPM: &config.RPM{Releases: []string{"42"}, Repos: []string{"releases"}, Architectures: []string{"x86_64"}},
 		}},
 	}
 	r, err := NewRunner(cfg, storage.NewMemory(), observability.NewMetrics("test"), slog.New(slog.NewTextHandler(io.Discard, nil)), "test")
@@ -38,10 +38,10 @@ func TestUnsupportedRepoIsListedButNotRunnable(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer r.Stop()
-	if err := r.Trigger("ubuntu"); !errors.Is(err, ErrUnsupported) {
+	if err := r.Trigger("fedora"); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("Trigger err = %v, want ErrUnsupported", err)
 	}
-	if _, err := r.RunOnce(context.Background(), "ubuntu"); !errors.Is(err, ErrUnsupported) {
+	if _, err := r.RunOnce(context.Background(), "fedora"); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("RunOnce err = %v, want ErrUnsupported", err)
 	}
 	if err := r.Trigger("nope"); !errors.Is(err, ErrUnknownRepo) {
