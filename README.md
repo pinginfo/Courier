@@ -25,9 +25,8 @@ Early but functional for Alpine. What works today:
 - Config loading and validation, structured JSON logs, Prometheus metrics, health endpoints.
 - Dockerfile and Helm chart (with optional ServiceMonitor and alert rules).
 
-**Not implemented yet:** the RPM (Fedora) provider. Repos of that type are
-listed in `/status` as `unsupported` and are not scheduled. See the delivery plan in
-[docs/architecture.md](docs/architecture.md#11-delivery-plan).
+**Not implemented yet:** proxy-cache mode for language ecosystems (Go, npm, PyPI) and container images. See the
+delivery plan in [docs/architecture.md](docs/architecture.md#11-delivery-plan).
 
 ## Quick start
 
@@ -92,6 +91,13 @@ packages, `dep11`, `cnf` and debian-installer indexes are not mirrored.
 
 **Size warning:** a full Ubuntu release is hundreds of GB per architecture (`main` plus `universe`). Start with
 a single suite, component and architecture.
+
+For Fedora, `rpm.repos` are `releases`, `updates` and `updates-testing` (Everything variant only), and
+`rpm.releases` are release numbers or `rawhide`. Fedora does not sign its repository metadata, so Courier cannot verify
+`repomd.xml` itself: integrity rests on the HTTPS upstream, the checksums, and `dnf`'s per-package signature check on your
+clients (keep `gpgcheck=1`). If an upstream does publish `repomd.xml.asc`, set `gpg_keyring` to verify it. End-of-life
+releases are removed from the main mirror, so a sync of one fails with a 404; remove it from the config.
+A full Fedora release is roughly 80k packages and well over 100 GB with updates.
 
 Releases and architectures are plain lists, so adding one is a config change.
 
@@ -162,7 +168,7 @@ internal/config/        config loading and validation
 internal/observability/ logging and Prometheus metrics
 internal/server/        HTTP endpoints
 internal/syncer/        sync engine, runner (scheduler + status)
-internal/provider/      provider interface; apk/ and apt/ implementations
+internal/provider/      provider interface; apk/, apt/ and rpm/ implementations
 internal/storage/       S3 (minio-go) and in-memory stores
 internal/fetcher/       HTTP downloads: retries, rate limit, stall detection
 internal/state/         per-repo manifest stored in the bucket

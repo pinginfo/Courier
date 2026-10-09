@@ -143,3 +143,48 @@ func TestSchedulePathSegmentsAndRate(t *testing.T) {
 		})
 	}
 }
+
+const fedoraYAML = `
+storage:
+  endpoint: minio.lan:9000
+  bucket: mirror
+  access_key_env: S3_ACCESS_KEY
+  secret_key_env: S3_SECRET_KEY
+repos:
+  - name: fedora
+    type: rpm
+    upstream: https://dl.fedoraproject.org/pub/fedora/linux
+    prefix: fedora
+    schedule: "30 */6 * * *"
+    rpm:
+      releases: ["43"]
+      repos: [releases, updates]
+      architectures: [x86_64]
+`
+
+func TestRPMValidation(t *testing.T) {
+	if _, err := Parse(strings.NewReader(fedoraYAML)); err != nil {
+		t.Fatalf("valid fedora config rejected: %v", err)
+	}
+	tests := []struct {
+		name    string
+		mutate  func(string) string
+		wantErr string
+	}{
+		{"unknown repo alias", func(s string) string { return strings.Replace(s, "[releases, updates]", "[releases, modular]", 1) }, "must be one of releases, updates, updates-testing"},
+		{"bad release", func(s string) string { return strings.Replace(s, `["43"]`, `["f43"]`, 1) }, "release number"},
+		{"rawhide with updates", func(s string) string { return strings.Replace(s, `["43"]`, `["rawhide"]`, 1) }, "rawhide only has"},
+		{"traversal arch", func(s string) string { return strings.Replace(s, "[x86_64]", "[../x]", 1) }, "not a valid path segment"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse(strings.NewReader(tt.mutate(fedoraYAML)))
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("err = %v, want containing %q", err, tt.wantErr)
+			}
+		})
+	}
+	if _, err := Parse(strings.NewReader(strings.Replace(strings.Replace(fedoraYAML, `["43"]`, `["rawhide"]`, 1), "[releases, updates]", "[releases]", 1))); err != nil {
+		t.Fatalf("rawhide with releases only must be valid: %v", err)
+	}
+}

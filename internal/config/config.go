@@ -116,6 +116,7 @@ type Log struct {
 
 var (
 	nameRe    = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+	releaseRe = regexp.MustCompile(`^([0-9]+|rawhide)$`)
 	segmentRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 	rateRe    = regexp.MustCompile(`^(\d+)\s*([KMG]?)B/s$`)
 )
@@ -297,6 +298,25 @@ func validateTypeSection(where string, r Repo) []error {
 		need("rpm", r.RPM != nil, nil)
 		if r.RPM != nil {
 			need("rpm", true, map[string][]string{"releases": r.RPM.Releases, "repos": r.RPM.Repos, "architectures": r.RPM.Architectures})
+			for _, rel := range r.RPM.Releases {
+				if !releaseRe.MatchString(rel) {
+					errs = append(errs, fmt.Errorf("%s: rpm.releases: %q must be a release number or \"rawhide\"", where, rel))
+				}
+				if rel == "rawhide" {
+					for _, name := range r.RPM.Repos {
+						if name != "releases" {
+							errs = append(errs, fmt.Errorf("%s: rpm.repos: rawhide only has the \"releases\" repo, not %q", where, name))
+						}
+					}
+				}
+			}
+			for _, name := range r.RPM.Repos {
+				switch name {
+				case "releases", "updates", "updates-testing":
+				default:
+					errs = append(errs, fmt.Errorf("%s: rpm.repos: %q must be one of releases, updates, updates-testing", where, name))
+				}
+			}
 		}
 	case TypeAPK:
 		need("apk", r.APK != nil, nil)

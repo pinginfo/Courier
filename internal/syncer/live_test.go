@@ -14,6 +14,7 @@ import (
 	"courier/internal/observability"
 	"courier/internal/provider/apk"
 	"courier/internal/provider/apt"
+	"courier/internal/provider/rpm"
 	"courier/internal/storage"
 	"courier/internal/storage/storagetest"
 )
@@ -129,4 +130,48 @@ func (w testWriter) Write(p []byte) (int, error) {
 
 func warnLogger(t *testing.T) *slog.Logger {
 	return slog.New(slog.NewTextHandler(testWriter{t}, &slog.HandlerOptions{Level: slog.LevelWarn}))
+}
+
+// TestLiveFedoraPartial plans the real Fedora 43 releases/x86_64 repository
+// (repodata incl. the zstd primary.xml, ~77k packages) and syncs packages for a
+// few seconds before cancelling. Opt-in: COURIER_LIVE_FEDORA=1 (downloads
+// roughly 300 MB of repodata plus packages).
+func TestLiveFedoraPartial(t *testing.T) {
+	if os.Getenv("COURIER_LIVE_FEDORA") == "" {
+		t.Skip("COURIER_LIVE_FEDORA not set")
+	}
+	s3, err := storage.NewS3(storagetest.Start(t), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := config.Repo{
+		Name: "fedora", Type: config.TypeRPM, Upstream: "https://dl.fedoraproject.org/pub/fedora/linux", Prefix: "fedora", Schedule: "* * * * *",
+		RPM: &config.RPM{Releases: []string{"43"}, Repos: []string{"releases"}, Architectures: []string{"x86_64"}},
+	}
+	log := warnLogger(t)
+	f := fetcher.New(fetcher.Options{UserAgent: "courier-live-test"})
+	prov, err := rpm.New(repo, f, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng := NewEngine(repo, config.Defaults{Concurrency: 8, Retention: config.Retention{GracePeriod: time.Hour}}, prov, f, s3, observability.NewMetrics("test"), log)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	start := time.Now()
+	res, err := eng.Run(ctx)
+	t.Logf("ran %v: planned=%d downloaded=%d failed=%d bytes=%d err=%v",
+		time.Since(start).Round(time.Second), res.Planned, res.Downloaded, res.Failed, res.Bytes, err)
+	if err == nil {
+		t.Fatal("expected the run to be cut short by the timeout")
+	}
+	if res.Planned < 50000 {
+		t.Errorf("planned only %d packages", res.Planned)
+	}
+	if res.Downloaded < 10 || res.Failed != 0 {
+		t.Errorf("downloaded=%d failed=%d", res.Downloaded, res.Failed)
+	}
+	if _, err := s3.Stat(context.Background(), "fedora/releases/43/Everything/x86_64/os/repodata/repomd.xml"); err == nil {
+		t.Error("repomd.xml published by a cancelled run")
+	}
 }

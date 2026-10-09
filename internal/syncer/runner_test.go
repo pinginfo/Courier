@@ -17,8 +17,7 @@ func testRunner(t *testing.T) *Runner {
 	cfg := &config.Config{
 		Defaults: config.Defaults{Concurrency: 2},
 		Repos: []config.Repo{{
-			Name: "fedora", Type: config.TypeRPM, Upstream: "https://example.org", Prefix: "fedora", Schedule: "0 4 * * *",
-			RPM: &config.RPM{Releases: []string{"42"}, Repos: []string{"releases"}, Architectures: []string{"x86_64"}},
+			Name: "fedora", Type: "npm", Upstream: "https://example.org", Prefix: "fedora", Schedule: "0 4 * * *",
 		}},
 	}
 	r, err := NewRunner(cfg, storage.NewMemory(), observability.NewMetrics("test"), slog.New(slog.NewTextHandler(io.Discard, nil)), "test")
@@ -28,6 +27,7 @@ func testRunner(t *testing.T) *Runner {
 	return r
 }
 
+// A type with no provider (a future ecosystem) is listed but never scheduled.
 func TestUnsupportedRepoIsListedButNotRunnable(t *testing.T) {
 	r := testRunner(t)
 	st := r.Status()

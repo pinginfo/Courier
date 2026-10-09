@@ -37,9 +37,12 @@ repos:
     prefix: fedora
     schedule: "30 */6 * * *"
     rpm:
-      releases: ["42"]
+      releases: ["43"]
       repos: [releases, updates]
       architectures: [x86_64]
+      # repos: releases | updates | updates-testing. Use releases: ["rawhide"] with repos: [releases].
+      # Fedora does not sign its repository metadata; optionally set gpg_keyring above this block
+      # if your upstream publishes repomd.xml.asc.
 
   - name: alpine
     type: apk

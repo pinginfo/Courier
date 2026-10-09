@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"courier/internal/pgp"
 )
 
 // TestRealUbuntuData checks the parsers and PGP verification against genuine,
@@ -23,7 +25,7 @@ func TestRealUbuntuData(t *testing.T) {
 		}
 		return b
 	}
-	kr, err := loadKeyring(filepath.Join(dir, "ubuntu-archive-keyring.gpg"))
+	kr, err := pgp.LoadKeyring(filepath.Join(dir, "ubuntu-archive-keyring.gpg"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +44,7 @@ func TestRealUbuntuData(t *testing.T) {
 		t.Errorf("unexpected release: %+v", rel)
 	}
 
-	if err := checkDetached(kr, read("Release"), read("Release.gpg")); err != nil {
+	if err := pgp.CheckDetached(kr, read("Release"), read("Release.gpg")); err != nil {
 		t.Fatalf("real Release.gpg: %v", err)
 	}
 
@@ -52,7 +54,7 @@ func TestRealUbuntuData(t *testing.T) {
 	if _, err := openInRelease(bad, kr); err == nil {
 		t.Error("tampered InRelease accepted")
 	}
-	if err := checkDetached(kr, append(read("Release"), '\n'), read("Release.gpg")); err == nil {
+	if err := pgp.CheckDetached(kr, append(read("Release"), '\n'), read("Release.gpg")); err == nil {
 		t.Error("tampered Release accepted")
 	}
 

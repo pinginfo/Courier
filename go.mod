@@ -5,6 +5,7 @@ go 1.27.2
 require (
 	github.com/ProtonMail/go-crypto v1.5.2
 	github.com/johannesboyne/gofakes3 v1.2.0
+	github.com/klauspost/compress v1.20.1
 	github.com/minio/minio-go/v7 v7.3.0
 	github.com/prometheus/client_golang v1.25.0
 	github.com/robfig/cron/v3 v3.0.1
@@ -19,7 +20,6 @@ require (
 	github.com/cloudflare/circl v1.6.3 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/klauspost/compress v1.20.1 // indirect
 	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
 	github.com/klauspost/crc32 v1.3.0 // indirect
 	github.com/minio/crc64nvme v1.1.1 // indirect

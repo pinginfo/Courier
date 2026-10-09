@@ -20,6 +20,6 @@ Stack: Go, container image (multi-stage Dockerfile), Helm chart in `charts/`.
 ## Toolchain (this machine)
 - Go 1.27.2 in `~/sdk/go1.27.2`, helm in `~/sdk/helm-4.3.0`, scanners in `~/go/bin`; all symlinked into `~/.local/bin`.
 - No `make`, `gcc` or container runtime installed: run the Makefile targets' commands directly; `go test -race` is unavailable without gcc.
-- Module name: `courier`. Layout: `cmd/courier`, `internal/{config,observability,server,syncer,provider/{apk,apt},storage,fetcher,state}`, `charts/courier`, `deploy/Dockerfile`.
-- Opt-in real-data tests: `COURIER_REAL_ALPINE=<dir>` + `PKG_C` (provider/apk), `COURIER_REAL_UBUNTU=<dir>` (provider/apt), `COURIER_LIVE_KEYS=<alpine keys dir>` and `COURIER_LIVE_UBUNTU_KEYRING=<keyring.gpg>` (syncer; download ~300-600 MB). Fixtures are in `~/dl-alpine` and `~/dl-ubuntu`. S3 tests use an in-process TLS fake (`internal/storage/storagetest`).
+- Module name: `courier`. Layout: `cmd/courier`, `internal/{config,observability,server,syncer,provider/{apk,apt,rpm,hashutil},pgp,storage,fetcher,state}`, `charts/courier`, `deploy/Dockerfile`.
+- Opt-in real-data tests: `COURIER_REAL_ALPINE=<dir>` + `PKG_C` (provider/apk), `COURIER_REAL_UBUNTU=<dir>` (provider/apt), `COURIER_REAL_FEDORA=<dir>` (provider/rpm: repomd.xml + primary.xml.zst), `COURIER_LIVE_FEDORA=1` (syncer; ~1 GB), `COURIER_LIVE_KEYS=<alpine keys dir>` and `COURIER_LIVE_UBUNTU_KEYRING=<keyring.gpg>` (syncer; download ~300-600 MB). Fixtures are in `~/dl-alpine`, `~/dl-ubuntu`, `~/dl-fedora`. S3 tests use an in-process TLS fake (`internal/storage/storagetest`).
 - Design: `docs/architecture.md`. Example config: `config.example.yaml`.

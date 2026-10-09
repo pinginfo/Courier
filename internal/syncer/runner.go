@@ -16,6 +16,7 @@ import (
 	"courier/internal/provider"
 	"courier/internal/provider/apk"
 	"courier/internal/provider/apt"
+	"courier/internal/provider/rpm"
 	"courier/internal/storage"
 )
 
@@ -65,6 +66,8 @@ func NewProvider(repo config.Repo, f *fetcher.Fetcher, log *slog.Logger) (provid
 		return apk.New(repo, f, log)
 	case config.TypeAPT:
 		return apt.New(repo, f, log)
+	case config.TypeRPM:
+		return rpm.New(repo, f, log)
 	default:
 		return nil, fmt.Errorf("%w: type %q", ErrUnsupported, repo.Type)
 	}

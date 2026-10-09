@@ -271,3 +271,11 @@ The open-source MinIO server and `mc` are archived upstream: no further releases
 ### Uploads over plain HTTP
 
 For large files the S3 client uploads in parts. Over plain HTTP, `minio-go` signs those parts with chunked payload signatures, which a store must decode; a store that does not will keep extra bytes. Courier's post-upload size check turns that into a failed package instead of a corrupt mirror. Prefer TLS (`use_ssl: true`, with `ca_file` for a private CA) for the S3 endpoint.
+
+### RPM provider (as built)
+
+- **Layout.** Follows Fedora's tree: `releases/<rel>/Everything/<arch>/os`, `updates/<rel>/Everything/<arch>`, `updates/testing/<rel>/Everything/<arch>`, and `development/rawhide/Everything/<arch>/os`. Config uses the aliases `releases`, `updates`, `updates-testing`; Everything variant only. End-of-life releases disappear from the main mirror (a 404 fails the plan).
+- **Trust chain.** `repomd.xml` -> every repodata file (size and sha256/sha512 from `repomd.xml`) -> `primary.xml` -> every package (size and checksum from `primary.xml`). Fedora does not publish `repomd.xml.asc`, so the top of the chain is the HTTPS upstream; clients verify each package's own RPM signature (`gpgcheck=1`). If `gpg_keyring` is set, `repomd.xml.asc` is required and verified (for upstreams that do sign). Verified against the real Fedora 43 repository. Courier does not check the RPM-embedded signatures itself.
+- **Metadata.** All files listed in `repomd.xml` are mirrored, including the large `filelists` and sqlite/zchunk variants. They are staged on disk; the checksum-named files are immutable, and the previous generation becomes an orphan and is deleted after the grace period. `repomd.xml` (and `.asc`) is published last.
+- **Compression.** zstd (via `klauspost/compress`), gzip and uncompressed `primary.xml`; xz is not supported (Fedora uses zstd).
+- **Paths.** Package locations may contain `^ ~ + %` (about 18% of Fedora 43 packages do); `xml:base` is rejected; md5/sha1 checksums are rejected.

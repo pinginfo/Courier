@@ -4,11 +4,8 @@ package apt
 import (
 	"compress/gzip"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"path"
@@ -21,7 +18,9 @@ import (
 
 	"courier/internal/config"
 	"courier/internal/fetcher"
+	"courier/internal/pgp"
 	"courier/internal/provider"
+	"courier/internal/provider/hashutil"
 )
 
 const (
@@ -45,7 +44,7 @@ func New(repo config.Repo, f *fetcher.Fetcher, log *slog.Logger) (*Provider, err
 		log.Warn("gpg_keyring not set: upstream Release signatures are not verified by courier (clients still verify them)", "repo", repo.Name)
 		return p, nil
 	}
-	kr, err := loadKeyring(repo.GPGKeyring)
+	kr, err := pgp.LoadKeyring(repo.GPGKeyring)
 	if err != nil {
 		return nil, err
 	}
@@ -115,8 +114,8 @@ func (p *Provider) planSuite(ctx context.Context, suite, tmp string, plan *provi
 		return fmt.Errorf("fetch Release.gpg: %w", err)
 	}
 	if p.keyring != nil && releaseGPG != nil {
-		if err := checkDetached(p.keyring, releaseRaw, releaseGPG); err != nil {
-			return err
+		if err := pgp.CheckDetached(p.keyring, releaseRaw, releaseGPG); err != nil {
+			return fmt.Errorf("release.gpg signature verification failed: %w", err)
 		}
 	}
 
@@ -348,19 +347,5 @@ func (p *Provider) readPackages(files []staged, comp, arch string) ([]debPackage
 
 // verifySHA256 returns a check that a local file has the given SHA-256.
 func verifySHA256(want string) func(string) error {
-	return func(file string) error {
-		f, err := os.Open(file) // #nosec G304 G703 -- staged/temp file owned by courier
-		if err != nil {
-			return err
-		}
-		defer func() { _ = f.Close() }()
-		h := sha256.New()
-		if _, err := io.Copy(h, f); err != nil {
-			return err
-		}
-		if got := hex.EncodeToString(h.Sum(nil)); got != want {
-			return fmt.Errorf("sha256 %s does not match expected %s", got, want)
-		}
-		return nil
-	}
+	return func(file string) error { return hashutil.Check(file, "sha256", want) }
 }
