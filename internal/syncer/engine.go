@@ -117,7 +117,7 @@ func (e *Engine) Run(ctx context.Context) (res Result, err error) {
 		return res, err
 	}
 
-	if err := e.transfer(ctx, log, plan, old, &res); err != nil {
+	if err := e.transfer(ctx, log, plan, &res); err != nil {
 		return res, err
 	}
 
@@ -139,18 +139,13 @@ func (e *Engine) Run(ctx context.Context) (res Result, err error) {
 
 // transfer downloads and uploads every package that is not already mirrored.
 // It returns an error if any package failed; metadata must not be published then.
-func (e *Engine) transfer(ctx context.Context, log *slog.Logger, plan *provider.Plan, old *state.Manifest, res *Result) error {
+func (e *Engine) transfer(ctx context.Context, log *slog.Logger, plan *provider.Plan, res *Result) error {
 	name := e.repo.Name
-	var todo []provider.Package
-	for _, p := range plan.Packages {
-		if size, ok := old.Packages[p.Path]; ok && (p.Size == 0 || size == p.Size) {
-			res.Skipped++
-			continue
-		}
-		todo = append(todo, p)
-	}
+	// Every package is checked against the bucket, never against the manifest:
+	// the manifest says what we meant to upload, the bucket says what is there.
+	todo := plan.Packages
 	e.metrics.Files.WithLabelValues(name, "pending").Set(float64(len(todo)))
-	log.Info("transfer starting", "to_check", len(todo), "already_mirrored", res.Skipped)
+	log.Info("transfer starting", "packages", len(todo))
 
 	var downloaded, skipped, failed, bytes atomic.Int64
 	g, gctx := errgroup.WithContext(ctx)
@@ -177,7 +172,7 @@ func (e *Engine) transfer(ctx context.Context, log *slog.Logger, plan *provider.
 	}
 	_ = g.Wait()
 	res.Downloaded, res.Failed, res.Bytes = int(downloaded.Load()), int(failed.Load()), bytes.Load()
-	res.Skipped += int(skipped.Load())
+	res.Skipped = int(skipped.Load())
 	e.metrics.Bytes.WithLabelValues(name, "downloaded").Add(float64(res.Bytes))
 	e.metrics.Bytes.WithLabelValues(name, "uploaded").Add(float64(res.Bytes))
 	e.metrics.Files.WithLabelValues(name, "failed").Set(float64(res.Failed))
@@ -197,7 +192,7 @@ func (e *Engine) transfer(ctx context.Context, log *slog.Logger, plan *provider.
 func (e *Engine) mirrorOne(ctx context.Context, p provider.Package) (n int64, did bool, err error) {
 	key := e.key(p.Path)
 	if info, err := e.store.Stat(ctx, key); err == nil && (p.Size == 0 || info.Size == p.Size) {
-		return 0, false, nil // adopt an object left by an interrupted run
+		return 0, false, nil // already in the bucket (also adopts uploads left by an interrupted run)
 	} else if err != nil && !errors.Is(err, storage.ErrNotFound) {
 		return 0, false, fmt.Errorf("stat %s: %w", key, err)
 	}
@@ -228,6 +223,17 @@ func (e *Engine) mirrorOne(ctx context.Context, p provider.Package) (n int64, di
 	}
 	if err := e.store.Put(ctx, key, tmp, n, "application/octet-stream"); err != nil {
 		return 0, false, fmt.Errorf("upload: %w", err)
+	}
+	// Do not trust a successful PUT: confirm the object is really there with the
+	// right size before this package counts as mirrored.
+	info, err := e.store.Stat(ctx, key)
+	switch {
+	case errors.Is(err, storage.ErrNotFound):
+		return 0, false, fmt.Errorf("upload: %s was accepted but is not in the bucket", key)
+	case err != nil:
+		return 0, false, fmt.Errorf("upload: confirm %s: %w", key, err)
+	case info.Size != n:
+		return 0, false, fmt.Errorf("upload: %s has %d bytes in the bucket, expected %d", key, info.Size, n)
 	}
 	return n, true, nil
 }

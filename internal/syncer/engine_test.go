@@ -314,3 +314,72 @@ func TestCancelledRunPublishesNothing(t *testing.T) {
 		t.Fatal("published after cancellation")
 	}
 }
+
+// lossyStore accepts every Put but silently discards the ones drop selects,
+// like a broken or misconfigured S3 backend.
+type lossyStore struct {
+	*storage.Memory
+	drop func(key string) bool
+}
+
+func (l lossyStore) Put(ctx context.Context, key string, r io.Reader, size int64, ct string) error {
+	if l.drop(key) {
+		_, _ = io.Copy(io.Discard, r)
+		return nil
+	}
+	return l.Memory.Put(ctx, key, r, size, ct)
+}
+
+func TestSilentlyDroppedUploadIsDetectedAndBlocksPublish(t *testing.T) {
+	e := newEnv(t, nil)
+	e.publishUpstream(
+		apktest.BuildPkg(e.key, "busybox", "1.0-r0", "aaa"),
+		apktest.BuildPkg(e.key, "musl", "2.0-r0", "bbb"),
+	)
+	e.eng.store = lossyStore{Memory: e.store, drop: func(k string) bool { return strings.Contains(k, "musl") }}
+
+	res, err := e.run()
+	if err == nil || res.Failed != 1 {
+		t.Fatalf("res=%+v err=%v; a dropped upload must fail the run", res, err)
+	}
+	if e.has(idxKey) || e.has(stateKey) {
+		t.Fatal("index or manifest published although a package is not in the bucket")
+	}
+}
+
+func TestMissingObjectsAreReuploadedEvenIfManifestSaysMirrored(t *testing.T) {
+	e := newEnv(t, nil)
+	a := apktest.BuildPkg(e.key, "busybox", "1.0-r0", "aaa")
+	b := apktest.BuildPkg(e.key, "musl", "2.0-r0", "bbb")
+	e.publishUpstream(a, b)
+	e.mustRun()
+
+	// Objects vanish from the bucket; the manifest still lists them.
+	_ = e.store.Delete(context.Background(), "alpine/"+dir+"/busybox-1.0-r0.apk")
+	_ = e.store.Delete(context.Background(), "alpine/"+dir+"/musl-2.0-r0.apk")
+
+	res := e.mustRun()
+	if res.Downloaded != 2 || res.Skipped != 0 {
+		t.Fatalf("result = %+v, want both packages downloaded again", res)
+	}
+	if !e.has("alpine/"+dir+"/busybox-1.0-r0.apk") || !e.has("alpine/"+dir+"/musl-2.0-r0.apk") {
+		t.Fatal("packages were not restored")
+	}
+}
+
+func TestTruncatedObjectInBucketIsReplaced(t *testing.T) {
+	e := newEnv(t, nil)
+	a := apktest.BuildPkg(e.key, "busybox", "1.0-r0", "aaa")
+	e.publishUpstream(a)
+	e.mustRun()
+	key := "alpine/" + dir + "/busybox-1.0-r0.apk"
+	_ = e.store.Put(context.Background(), key, strings.NewReader("trunc"), 5, "")
+
+	res := e.mustRun()
+	if res.Downloaded != 1 {
+		t.Fatalf("result = %+v", res)
+	}
+	if got, _ := e.store.Bytes(key); string(got) != string(a.Bytes) {
+		t.Fatal("wrong-sized object was not replaced")
+	}
+}

@@ -3,3 +3,4 @@
 *.out
 .claude/settings.local.json
 values.yaml
+run.sh
