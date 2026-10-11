@@ -211,6 +211,13 @@ average duration, throughput, errors by stage and reason, garbage-collected obje
 latency, and process memory/CPU. Each repo keeps the same colour in every panel. The alerts are `CourierSyncStale`,
 `CourierSyncFailing` and `CourierDown`.
 
+<details>
+<summary>Show a screenshot of the dashboard</summary>
+
+![Courier Grafana dashboard](docs/dashboard.png)
+
+</details>
+
 ## Container image and Kubernetes
 
 ```sh
