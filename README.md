@@ -276,3 +276,7 @@ docs/architecture.md    design, decisions and delivery plan
 
 The full design (sync flow, provider interface, publish ordering, security notes and
 the proxy-cache plan) is in [docs/architecture.md](docs/architecture.md).
+
+## License
+
+Courier is licensed under the [Apache License 2.0](LICENSE).
