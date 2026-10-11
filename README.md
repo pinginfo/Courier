@@ -228,8 +228,13 @@ podman build -f deploy/Dockerfile --build-arg VERSION=0.1.0 -t courier:0.1.0 .
 kubectl create secret generic courier-s3 \
   --from-literal=S3_ACCESS_KEY=... --from-literal=S3_SECRET_KEY=...
 
-# Install with your own values (config.repos must not be empty)
+# Install a released chart from ghcr.io (the image defaults to the chart's appVersion)
+helm install courier oci://ghcr.io/pinginfo/charts/courier --version 0.1.0 -f my-values.yaml
+
+# Or install from a local checkout with your own values (config.repos must not be empty).
+# image.repository defaults to ghcr.io/pinginfo/courier; override it for a locally built image.
 helm install courier charts/courier -f my-values.yaml \
+  --set image.repository=courier \
   --set image.tag=0.1.0 \
   --set serviceMonitor.enabled=true \
   --set prometheusRule.enabled=true

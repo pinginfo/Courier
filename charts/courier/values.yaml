@@ -1,5 +1,5 @@
 image:
-  repository: courier
+  repository: ghcr.io/pinginfo/courier
   tag: "" # defaults to the chart appVersion; never use "latest"
   pullPolicy: IfNotPresent
 
